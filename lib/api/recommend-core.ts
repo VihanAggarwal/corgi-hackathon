@@ -124,10 +124,19 @@ export async function recommendForIdentity(
     if (fresh.length >= count) pool = fresh;
   }
 
-  // Respect the area they gave, and fall back rather than return nothing.
+  // Respect the area they gave.
+  //
+  // NO FALLBACK WHEN THE AREA IS UNKNOWN. The corpus is twenty NYC dishes, so
+  // someone in San Francisco matches nothing, and quietly widening to the
+  // whole corpus meant answering "sf, craving mexican" with Malaysian food in
+  // the Lower East Side. That is worse than nothing: it destroys trust in
+  // every other recommendation the agent has made.
+  //
+  // Returning empty lets the caller say honestly that it has no coverage
+  // there, which is true and recoverable.
   if (options.area) {
-    const near = pool.filter((d) => inArea(venueHood(d.venueId), options.area!));
-    if (near.length > 0) pool = near;
+    pool = pool.filter((d) => inArea(venueHood(d.venueId), options.area!));
+    if (pool.length === 0) return [];
   }
 
   // Hard rule 3. The filter runs on the whole candidate list before ranking,

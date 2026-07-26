@@ -1117,11 +1117,34 @@ async function handlePlainText(
     ];
   }
 
+  // BE SPECIFIC ABOUT WHY THERE IS NOTHING.
+  //
+  // The corpus only covers NYC right now. "nothing came back" made the agent
+  // look broken to someone in San Francisco, when the honest answer is that we
+  // have no coverage there yet. Naming the limit is recoverable; being vague
+  // about it is not.
+  if (knownArea && !CORPUS_CITY_RE.test(knownArea)) {
+    return [
+      replyText(message, `real talk, i only know nyc spots rn, nothing in ${knownArea} yet`),
+      replyText(message, 'send me a menu photo of wherever you are and ill tell you what to order tho'),
+    ];
+  }
+
   return [
     replyText(message, 'nothing came back that id actually stand behind rn'),
     replyText(message, 'send me a menu photo and ill work from that'),
   ];
 }
+
+/**
+ * Areas the corpus actually covers.
+ *
+ * Deliberately a plain list rather than a geocode lookup: the corpus is twenty
+ * hand-built NYC dishes, so the honest boundary is "the boroughs and the
+ * neighborhoods in fixtures", and anything else gets told the truth.
+ */
+const CORPUS_CITY_RE =
+  /\b(nyc|new york|manhattan|brooklyn|queens|bronx|east village|lower east|les|chinatown|astoria|crown heights|greenpoint|union square|two bridges|loisaida|downtown brooklyn)\b/i;
 
 // ---------------------------------------------------------------------------
 // Entry point
