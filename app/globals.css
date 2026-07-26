@@ -31,10 +31,13 @@
 
 html {
   background: #0a0a0b;
+  height: 100%;
   -webkit-tap-highlight-color: transparent;
 }
 
 body {
+  /* svh, so the duel fits one screen on a phone with a moving toolbar. */
+  min-height: 100svh;
   background: #0a0a0b;
   color: #ece7dd;
   font-family: var(--font-serif);
