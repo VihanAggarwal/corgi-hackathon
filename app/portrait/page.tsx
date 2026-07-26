@@ -3,9 +3,11 @@ import {
   getDishView,
   getPortrait,
   getRecommendations,
+  getProfileTheta,
   getRegionStates,
 } from "@/components/data";
 import { RecommendationCard } from "@/components/rec/RecommendationCard";
+import { FlavourHex } from "@/components/portrait/FlavourHex";
 import { RegionShape } from "@/components/portrait/RegionShape";
 import { Label, Masthead, Rule, SeededBadge } from "@/components/ui/primitives";
 import { ShareRow } from "@/components/ui/ShareRow";
@@ -39,11 +41,16 @@ const dateLine = (iso: string) =>
  * The prose comes from Track A. Track B sets it and does not paraphrase it.
  */
 export default async function PortraitPage() {
-  const [portrait, { before, after }, recs] = await Promise.all([
+  const [portrait, { before, after }, recs, profileTheta] = await Promise.all([
     getPortrait(),
     getRegionStates(),
     getRecommendations(),
+    getProfileTheta(),
   ]);
+
+  // No stored theta history yet, so the hexagon draws one shape rather than a
+  // fabricated "before". The region shape below already carries the growth.
+  const priorTheta = undefined;
 
   // The twin channel may be off, in which case getRecommendations never hands
   // back a twin card and nothing on this page mentions one.
@@ -106,11 +113,16 @@ export default async function PortraitPage() {
               like.
             </p>
           </div>
-          <RegionShape
-            before={before}
-            after={after}
-            caption="the region you have eaten in"
-          />
+          <div className="space-y-10">
+            {/* The hexagon reads at a glance; the region shape reads as growth.
+                Both carry axis names and no numbers, per hard rule 1. */}
+            <FlavourHex theta={profileTheta} previous={priorTheta} />
+            <RegionShape
+              before={before}
+              after={after}
+              caption="the region you have eaten in"
+            />
+          </div>
         </section>
 
         {next ? (

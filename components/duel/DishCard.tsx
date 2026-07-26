@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { DishView } from "@/components/data";
 import { Label } from "@/components/ui/primitives";
 
@@ -23,6 +24,23 @@ function tone(id: string): string {
   return TONES[h % TONES.length];
 }
 
+/**
+ * Where a dish photo lives.
+ *
+ * Convention over data: drop a file at public/dishes/<dishId>.jpg and it
+ * appears. Nothing here fetches a third party image service, because a demo
+ * that depends on someone else's CDN staying up on conference wifi is a demo
+ * that fails in front of judges, and a random "food photo" that is not the
+ * actual dish is worse than no photo at all.
+ *
+ * A missing file 404s, onError fires, and the tonal panel below takes over.
+ * That fallback is the designed state, not a broken one.
+ */
+function photoUrl(dish: DishView): string | null {
+  if (dish.imageUrl) return dish.imageUrl;
+  return `/dishes/${dish.dishId}.jpg`;
+}
+
 export function DishCard({
   dish,
   onPick,
@@ -38,6 +56,8 @@ export function DishCard({
   eager?: boolean;
 }) {
   const interactive = Boolean(onPick);
+  const [failed, setFailed] = useState(false);
+  const src = photoUrl(dish);
 
   return (
     <button
@@ -55,17 +75,19 @@ export function DishCard({
       ].join(" ")}
       style={{ background: tone(dish.dishId) }}
     >
-      {dish.imageUrl ? (
+      {src && !failed ? (
         <>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={dish.imageUrl}
+            src={src}
             alt=""
+            onError={() => setFailed(true)}
             className="absolute inset-0 h-full w-full object-cover"
             loading={eager ? "eager" : "lazy"}
             decoding="async"
           />
-          <div className="absolute inset-0 bg-[#0a0a0b]/45" />
+          {/* Scrim, so the dish name stays legible over any photo. */}
+          <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0b]/85 via-[#0a0a0b]/45 to-[#0a0a0b]/30" />
         </>
       ) : null}
 

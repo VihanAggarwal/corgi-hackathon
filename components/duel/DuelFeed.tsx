@@ -38,6 +38,15 @@ export function DuelFeed({
 }) {
   const [index, setIndex] = useState(0);
   const [pickedId, setPickedId] = useState<string | null>(null);
+  /**
+   * Skips are counted separately and NEVER count toward the target.
+   *
+   * "I have not heard of either of these" is real information about the corpus
+   * and zero information about the person's taste. Letting it advance the
+   * progress bar would let someone reach a finished profile having taught the
+   * model nothing, which is worse than making them swipe two more pairs.
+   */
+  const [skipped, setSkipped] = useState(0);
 
   const pair = pairs[index % pairs.length];
   const next = pairs[(index + 1) % pairs.length];
@@ -69,10 +78,11 @@ export function DuelFeed({
         surface,
       });
 
-      // Counted for this run only. appendPick returns a lifetime total, so a
-      // second visit cleared the target on its first tap: the recipient of a
-      // shared card saw a comparison that claimed ten picks after making one.
-      const picks = index + 1;
+      // Counted for this run only, and skips do not count. appendPick returns a
+      // lifetime total, so a second visit cleared the target on its first tap:
+      // the recipient of a shared card saw a comparison that claimed ten picks
+      // after making one.
+      const picks = index + 1 - skipped;
       if (picks >= target) {
         onComplete(picks);
         return;
@@ -84,8 +94,21 @@ export function DuelFeed({
         setIndex((i) => i + 1);
       }, 130);
     },
-    [index, onComplete, onPick, pair, pickedId, surface, target],
+    [index, onComplete, onPick, pair, pickedId, skipped, surface, target],
   );
+
+  /**
+   * Advance without recording anything.
+   *
+   * Deliberately does not call submitDuel: a skip is not a duel with a missing
+   * winner, it is the absence of an observation. Sending it would put a
+   * meaningless row in front of the model fit.
+   */
+  const skip = useCallback(() => {
+    if (pickedId) return;
+    setSkipped((s) => s + 1);
+    setIndex((i) => i + 1);
+  }, [pickedId]);
 
   return (
     <div className="flex-1 min-h-0 flex flex-col">
@@ -124,9 +147,23 @@ export function DuelFeed({
         <div className="flex-1 h-px bg-rule relative">
           <div
             className="absolute left-0 top-0 h-px bg-ink/70 transition-[width] duration-200"
-            style={{ width: `${Math.min(100, (index / target) * 100)}%` }}
+            style={{
+              width: `${Math.min(100, ((index - skipped) / target) * 100)}%`,
+            }}
           />
         </div>
+
+        {/* Understated on purpose. Skipping is allowed, not encouraged: every
+            skip is a pair that taught the model nothing. */}
+        <button
+          type="button"
+          onClick={skip}
+          disabled={pickedId != null}
+          className="label text-ink-faint hover:text-ink-dim transition-colors disabled:opacity-40"
+        >
+          dont know either
+        </button>
+
         <Label>
           {index === 0 ? "tap the one you would rather eat" : "keep going"}
         </Label>

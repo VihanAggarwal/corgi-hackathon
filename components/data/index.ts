@@ -288,6 +288,21 @@ export async function getDuelBlockForCard(
   ];
 }
 
+/**
+ * The fitted preference vector, for the flavour hexagon.
+ *
+ * Falls back to a zero vector, which the hexagon draws as a small even shape.
+ * That is the honest picture of "we do not know you yet", and it is better than
+ * a fabricated silhouette that implies a profile nobody built.
+ */
+export async function getProfileTheta(): Promise<number[]> {
+  const live = await callApi<{ userVector?: { theta: number[] } }>(
+    `/api/profile?deviceId=${encodeURIComponent(currentDeviceId())}`,
+  );
+  const theta = live?.userVector?.theta;
+  return Array.isArray(theta) && theta.length === 24 ? theta : new Array(24).fill(0);
+}
+
 export async function getPortrait(): Promise<PalatePortrait> {
   const live = await callApi<{ portrait: PalatePortrait }>(
     `/api/portrait?deviceId=${encodeURIComponent(currentDeviceId())}`,
