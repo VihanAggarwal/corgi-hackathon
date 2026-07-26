@@ -611,6 +611,28 @@ describe('plain text queries', () => {
     expect(out[0].text).toMatch(/rough read/i);
   });
 
+  it('has a calibration floor the corpus can actually reach', async () => {
+    // The floor sat at 12 while selectDuels, which never repeats a dish, could
+    // only produce 10 duels from a 20 dish corpus. Anyone who swiped the whole
+    // feed was still told to go calibrate, forever. This asserts the two agree.
+    const store = createInMemoryAgentStore();
+    const transport = createStubTransport();
+    store.setArea('conv_1', 'chinatown');
+
+    const maxDuelsCorpusCanProduce = Math.floor(20 / 2);
+    const out = await handleInboundMessage(inboundText({ text: 'where should i eat' }), {
+      ...deps(transport, store),
+      getUserState: async () => ({
+        theta: new Array(24).fill(0),
+        nComparisons: maxDuelsCorpusCanProduce,
+      }),
+      recommendForConversation: async () => [{ text: 'get the liang pi at Hunan Slurp.' }],
+    });
+
+    expect(out[0].text).toContain('liang pi');
+    expect(out[0].text).not.toContain('/duel');
+  });
+
   it('gives the same device id for a conversation every time, or profiles fork', () => {
     const a = conversationDeviceId('iMessage;-;+15551234567');
     const b = conversationDeviceId('iMessage;-;+15551234567');

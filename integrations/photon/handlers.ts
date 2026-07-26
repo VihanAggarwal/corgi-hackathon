@@ -868,8 +868,13 @@ function looksLikeArea(text: string): boolean {
  * Below this, a recommendation would be built on a theta that is mostly the
  * population prior (see core/model.ts shrinkage), so the honest move is to ask
  * for taste data rather than to guess and sound confident about it.
+ *
+ * MUST STAY BELOW WHAT THE CORPUS CAN ACTUALLY PRODUCE. selectDuels never
+ * repeats a dish, so a twenty dish corpus yields at most ten duels, and this
+ * sat at twelve: the floor was unreachable, and a person who swiped the entire
+ * feed was still told to go calibrate. Raise the corpus before raising this.
  */
-const CALIBRATION_PROMPT_FLOOR = 12;
+const CALIBRATION_PROMPT_FLOOR = 8;
 
 /**
  * The onboarding reply. This is the agent's growth loop: a cold text turns into
