@@ -16,7 +16,23 @@
 
 import { AXIS_KEYS } from '@/contracts/axes';
 import { CONSTANTS, type Dish } from '@/contracts/types';
-import { DISHES, DISH_BY_ID, VENUES, venueHood, venueName } from '@/components/mock/fixtures';
+import {
+  DISHES as RAW_DISHES,
+  VENUES,
+  venueHood,
+  venueName,
+} from '@/components/mock/fixtures';
+import { withMergedVector } from './dish-vectors';
+
+/**
+ * The corpus, with model-scored vectors merged over the hand-written ones.
+ *
+ * Done here, once, at the single seam every route already reads through, so
+ * nothing downstream has to know the vectors came from two sources. See
+ * dish-vectors.ts for why a merge and not a replacement.
+ */
+const DISHES: Dish[] = RAW_DISHES.map(withMergedVector);
+const DISH_BY_ID = new Map(DISHES.map((d) => [d.id, d]));
 
 export { DISHES, DISH_BY_ID, VENUES, venueHood, venueName };
 
