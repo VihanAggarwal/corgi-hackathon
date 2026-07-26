@@ -808,7 +808,11 @@ function calibrationInvite(nComparisons: number): string {
   );
 }
 
-function handlePlainText(message: InboundMessage, state: UserState): OutboundMessage {
+async function handlePlainText(
+  message: InboundMessage,
+  state: UserState,
+  deps: HandlerDeps,
+): Promise<OutboundMessage> {
   // Anyone who has not calibrated gets the link first, whatever they asked.
   // Answering a stranger's "what's good here" with a confident pick is exactly
   // the crowd-average recommendation this product exists to not be.
@@ -817,20 +821,42 @@ function handlePlainText(message: InboundMessage, state: UserState): OutboundMes
   }
 
   const intent = classifyTextIntent(message.text);
-  if (intent === 'venue_overview') {
-    return replyText(message, 'send me a photo of the menu and ill tell you what to get');
+
+  // A CALIBRATED PERSON ASKING WHERE TO EAT GETS A RECOMMENDATION.
+  //
+  // This used to answer "send me a photo of the menu", which reads as broken:
+  // the corpus recommendation needs no menu at all. It is the same pipeline
+  // /api/recommend runs, imported rather than reimplemented, so the constraint
+  // filter, the twin gate, and the evidence packet are identical here.
+  if (intent === 'venue_overview' || intent === 'priced_search' || intent === 'unknown') {
+    const recommend = deps.recommendForConversation;
+    if (recommend) {
+      try {
+        const picks = await recommend(message.conversation.id);
+        if (picks.length > 0) {
+          // The ask that makes the whole review loop work. No review is ever
+          // scraped, so a rating only exists if somebody texts it back.
+          return replyText(message, `${picks[0].text} text me how it was after, out of 10`);
+        }
+      } catch {
+        // Fall through to the honest non-answer below rather than surfacing a
+        // stack trace to somebody's phone.
+      }
+    }
   }
+
   if (intent === 'priced_search') {
     const match = message.text.match(PRICE_RE);
     const ceiling = match ? ` under $${match[1]}` : '';
     return replyText(
       message,
-      `cant search menus by text yet${ceiling}, sorry. snap a photo of one and ill work from that`,
+      `nothing${ceiling} came back that i'd actually stand behind right now. send me a menu photo and ill work from that`,
     );
   }
+
   return replyText(
     message,
-    'send me a menu photo and ill tell you what to get, or tell me how the last thing i sent you went',
+    'nothing came back that i\'d actually stand behind right now. send me a menu photo and ill work from that',
   );
 }
 
@@ -848,6 +874,18 @@ export interface HandlerDeps {
   getUserState?: (conversationId: string) => Promise<UserState>;
   /** Called with the refit result whenever a follow-up reply moves theta, so a caller can persist it. */
   onThetaRefit?: (conversationId: string, fit: ReturnType<typeof fitTheta>) => Promise<void> | void;
+  /**
+   * Corpus recommendation for a calibrated person who texts rather than sends
+   * a photo. Injected rather than imported so this module stays free of any
+   * dependency on the HTTP layer and on the in-memory store, and so a test can
+   * exercise the text path without standing up either.
+   *
+   * The runner wires this to lib/api/recommend-core, which is the same
+   * pipeline /api/recommend runs. Do not reimplement it here.
+   */
+  recommendForConversation?: (
+    conversationId: string,
+  ) => Promise<Array<{ text: string }>>;
 }
 
 /**
@@ -885,7 +923,7 @@ export async function handleInboundMessage(message: InboundMessage, deps: Handle
       const state = await (deps.getUserState ?? (() => Promise.resolve(defaultUserState())))(
         message.conversation.id,
       );
-      outbound.push(handlePlainText(message, state));
+      outbound.push(await handlePlainText(message, state, deps));
     }
   }
 

@@ -48,6 +48,8 @@ import {
   type Transport,
 } from './transport';
 import { defaultAgentStore, handleInboundMessage, sendDueFollowUps } from './handlers';
+import { recommendForDevice } from '../../lib/api/recommend-core';
+import { getOrCreateIdentity } from '../../lib/store/memory';
 
 // Minimal structural views of the SDK objects we touch. Typed locally rather
 // than importing the SDK's 6,000-line union so a minor SDK bump cannot break
@@ -284,7 +286,19 @@ async function main(): Promise<void> {
       console.log(
         `[${inbound.conversation.isGroup ? 'group' : 'dm'}] ${inbound.messageId}: ${preview}`,
       );
-      const replies = await handleInboundMessage(inbound, { transport, store });
+      const replies = await handleInboundMessage(inbound, {
+        transport,
+        store,
+        // A conversation IS a device here: the person has no account, and the
+        // conversation id is the only stable handle we have for them. That is
+        // the same zero-install identity the web cards use.
+        getUserState: async (conversationId) => {
+          const s = getOrCreateIdentity(`device:${conversationId}`, conversationId, null);
+          return { theta: s.theta, nComparisons: s.nComparisons };
+        },
+        recommendForConversation: (conversationId) =>
+          recommendForDevice(conversationId, { count: 1 }),
+      });
       for (const r of replies) console.log(`  -> ${r.text.slice(0, 80)}`);
     } catch (err) {
       // One bad message must never take the agent down mid-demo.

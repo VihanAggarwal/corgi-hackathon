@@ -591,6 +591,56 @@ describe('plain text queries', () => {
     expect(out[0].text).toMatch(/rough read/i);
   });
 
+  // -------------------------------------------------------------------------
+  // The reported bug: a calibrated person asking where to eat was told to send
+  // a menu photo, even though the corpus recommendation needs no menu at all.
+  // -------------------------------------------------------------------------
+
+  it('recommends from the corpus instead of asking for a menu photo', async () => {
+    const store = createInMemoryAgentStore();
+    const transport = createStubTransport();
+
+    const out = await handleInboundMessage(inboundText({ text: 'what do I get here' }), {
+      ...calibrated(transport, store),
+      recommendForConversation: async () => [
+        { text: 'get the liang pi at Hunan Slurp, about $14. it comes out cold, which throws people.' },
+      ],
+    });
+
+    expect(out[0].text).toContain('liang pi');
+    expect(out[0].text).not.toMatch(/photo/i);
+    // The ask is what makes the review loop exist at all.
+    expect(out[0].text).toMatch(/out of 10/i);
+  });
+
+  it('falls back honestly when the corpus returns nothing, and never invents a pick', async () => {
+    const store = createInMemoryAgentStore();
+    const transport = createStubTransport();
+
+    const out = await handleInboundMessage(inboundText({ text: 'where should i eat' }), {
+      ...calibrated(transport, store),
+      recommendForConversation: async () => [],
+    });
+
+    expect(out[0].text).toMatch(/stand behind/i);
+    expect(out[0].text).not.toMatch(/out of 10/i);
+  });
+
+  it('survives a recommender that throws rather than pushing an error to a phone', async () => {
+    const store = createInMemoryAgentStore();
+    const transport = createStubTransport();
+
+    const out = await handleInboundMessage(inboundText({ text: 'where should i eat' }), {
+      ...calibrated(transport, store),
+      recommendForConversation: async () => {
+        throw new Error('renderer exploded');
+      },
+    });
+
+    expect(out).toHaveLength(1);
+    expect(out[0].text).not.toMatch(/exploded|error|stack/i);
+  });
+
   it('writes like a text message, not a review', async () => {
     const store = createInMemoryAgentStore();
     const transport = createStubTransport();
