@@ -53,7 +53,7 @@ export function DuelFeed({
       setPickedId(winner);
       onPick?.(index, winner);
 
-      const count = appendPick({
+      appendPick({
         dishA: pair.a.dishId,
         dishB: pair.b.dishId,
         winner,
@@ -69,7 +69,10 @@ export function DuelFeed({
         surface,
       });
 
-      const picks = count || index + 1;
+      // Counted for this run only. appendPick returns a lifetime total, so a
+      // second visit cleared the target on its first tap: the recipient of a
+      // shared card saw a comparison that claimed ten picks after making one.
+      const picks = index + 1;
       if (picks >= target) {
         onComplete(picks);
         return;

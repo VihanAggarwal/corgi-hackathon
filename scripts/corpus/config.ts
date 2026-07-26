@@ -72,23 +72,17 @@ export const GATEWAY = {
 };
 
 /**
- * Options for the Anthropic client, routed through Gateway when configured.
+ * Re-exported from core so there is exactly one definition.
  *
- * Kept here rather than inline at each construction site so that Track A has
- * exactly one place to change if Gateway's contract turns out to differ from
- * what the docs imply. Both extract.ts and core/render.ts use this.
+ * It lives in core/ rather than here because core/render.ts and
+ * core/portrait.ts need it too, and core is the only directory the Next app is
+ * allowed to import from. Importing this file into the app would drag a dotenv
+ * side effect into the request path.
+ *
+ * dotenv has already run above by the time any script calls this, so the
+ * environment is populated for both callers.
  */
-export function anthropicClientOptions(): { apiKey: string; baseURL?: string } {
-  if (GATEWAY.baseUrl) {
-    return {
-      // Gateway authenticates with its own key and holds the provider
-      // credential. Fall back to the Anthropic key if only the URL is set.
-      apiKey: GATEWAY.apiKey || KEYS.anthropic,
-      baseURL: GATEWAY.baseUrl,
-    };
-  }
-  return { apiKey: KEYS.anthropic };
-}
+export { anthropicClientOptions, hasModelCredentials } from '../../core/anthropic-client';
 
 /**
  * Dry run mode. When true the pipeline exercises every code path with

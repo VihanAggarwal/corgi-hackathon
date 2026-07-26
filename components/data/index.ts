@@ -36,6 +36,13 @@ import {
   type DemoEvent,
 } from "@/components/mock/fixtures";
 
+/**
+ * True while the functions below return fixtures. A surface that shows
+ * fabricated history reads this instead of hardcoding a badge, so the label
+ * disappears with the swap rather than needing a component edit.
+ */
+export const IS_SEEDED = true;
+
 // ---------------------------------------------------------------------------
 // view types: the shape a surface actually needs, derived from the contract
 // ---------------------------------------------------------------------------

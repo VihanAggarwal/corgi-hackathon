@@ -1,4 +1,5 @@
 import {
+  IS_SEEDED,
   getDishView,
   getPortrait,
   getRecommendations,
@@ -6,7 +7,7 @@ import {
 } from "@/components/data";
 import { RecommendationCard } from "@/components/rec/RecommendationCard";
 import { RegionShape } from "@/components/portrait/RegionShape";
-import { Label, Masthead, Rule } from "@/components/ui/primitives";
+import { Label, Masthead, Rule, SeededBadge } from "@/components/ui/primitives";
 import { ShareRow } from "@/components/ui/ShareRow";
 import { AXES, type AxisKey } from "@/contracts/axes";
 
@@ -60,9 +61,13 @@ export default async function PortraitPage() {
       <Masthead right={<Label>{dateLine(portrait.generatedAt)}</Label>} />
 
       <main className="flex-1 w-full max-w-[46rem] mx-auto px-6 sm:px-10 pb-20">
-        <p className="pt-6">
+        {/* The portrait and the two-week region are fixtures until the swap.
+            A reader who just played twelve duels would otherwise take the
+            history below as their own. */}
+        <div className="pt-6 flex items-baseline justify-between gap-4">
           <Label bright>palate portrait</Label>
-        </p>
+          {IS_SEEDED ? <SeededBadge /> : null}
+        </div>
 
         <h1 className="sr-only">Palate portrait</h1>
 
