@@ -42,9 +42,26 @@ which is the growth loop and the most important screen).
 
 | Track | Owner | Status |
 |---|---|---|
-| **A** core intelligence | done | All 10 items. Committed on `track-a` |
-| **B** surfaces | Xander | Items 1-8 done on `main`. Integration pass pending Track C |
-| **C** api + integrations | in flight | db layer done; routes, vision, Photon, HRIS, seed, resilience being built by a workflow |
+| **A** core intelligence | done | All 10 items |
+| **B** surfaces | Xander | Done, and integrated against real routes |
+| **C** api + integrations | done | 13 routes, vision, Photon, HRIS, seed, resilience |
+
+**Live: https://corgi-hackathon-alpha.vercel.app**
+
+Verified in production, not assumed:
+
+- `/api/health` returns `ok: true`, database and Anthropic both reachable
+- `preflight-og.ts` passes 12/12 across all three shareable surfaces
+- Zero-install duel flow, card creation, compare, and the full recommend
+  pipeline (constraint filter, frontier rank, lift gate, packet, live renderer)
+  all answer correctly against the deployed instance
+- Deployment Protection is off: the preflight fetched anonymously and got 200s,
+  which is the same path Apple's link fetcher takes
+- Photon runs as a LOCAL process, not on Vercel:
+  `npx tsx integrations/photon/spectrum-runner.ts`
+
+The only thing never executed is pasting a card into a real Messages thread on a
+physical second phone.
 
 Branches: `main` (bootstrap + Track B), `track-a` (everything since). There is
 no `track-b` or `track-c` branch; Track B was committed straight to `main`
@@ -181,6 +198,17 @@ Append here the day something costs you 30+ minutes.
   Test to a real second phone; self-threads render differently.
 - **The card path does not touch Anthropic at all**, so iMessage is testable
   with no API key. The renderer is a separate test.
+- **PowerShell pipes prepend a UTF-8 BOM.** `"value" | npx vercel env add ...`
+  stored every production secret with a leading U+FEFF, which surfaced as
+  `Cannot convert argument to a ByteString because the character at index 0 has
+  a value of 65279`. The Anthropic key and the database URL were both silently
+  corrupted in production while the build and the deploy reported success.
+  `/api/health` is what caught it. Set env vars through Node stdin or the
+  dashboard, never a PowerShell pipe, and check `/api/health` after any change.
+- **Spectrum's `providers` barrel crashes at startup.** Importing
+  `spectrum-ts/providers` pulls in `@photon-ai/slack`, whose package exports map
+  resolves to nothing under Node's CJS loader. Import the subpath instead:
+  `spectrum-ts/providers/imessage`.
 
 ### Model and math
 
@@ -296,12 +324,13 @@ second real phone.
 
 **Blocked on the human, not on code:**
 
-1. Deploy to Vercel and disable Deployment Protection (needs an interactive login).
-2. Paste the card into a real Messages thread on a second phone.
-3. `GOOGLE_PLACES_API_KEY` if the corpus should be real; it is dry-run synthetic now.
-4. Merge Gateway URL and key, optional; unset means talk to Anthropic directly.
-5. Rotate the Anthropic key and the Supabase `service_role` key after the demo.
-   Both were pasted in plaintext into a chat.
+1. Paste `https://corgi-hackathon-alpha.vercel.app/c/p4w9r` into a real Messages
+   thread, sent to a second physical phone. This is the only unexecuted step.
+2. `GOOGLE_PLACES_API_KEY` if the corpus should be real; it is dry-run synthetic now.
+3. Merge Gateway URL and key, optional; unset means talk to Anthropic directly.
+4. **Rotate after the demo:** the Anthropic key, the Supabase `service_role`
+   key, and the Spectrum project secret. All three were pasted in plaintext
+   into a chat, and `service_role` bypasses every RLS policy.
 
 **Needs a decision from the team, and `/contracts` is frozen so nobody has touched it:**
 
