@@ -339,14 +339,24 @@ async function handlePhoto(
   const lines: string[] = [];
   if (order.preface) lines.push(order.preface);
   for (const pick of order.picks) lines.push(pick.text);
-  if (lines.length === 0) lines.push('Nothing on that menu came back with an honest recommendation.');
-
-  const reply = replyText(message, lines.join(' '));
+  if (lines.length === 0) lines.push('nothing on that menu came back with an honest rec, sorry');
 
   const withPhi = order.picks.filter(
     (p): p is PickWithPhi & { phi: Vec24 } => Array.isArray((p as PickWithPhi).phi),
   );
-  if (withPhi.length > 0 && (order.status === 'ok' || order.status === 'partial')) {
+  const willFollowUp = withPhi.length > 0 && (order.status === 'ok' || order.status === 'partial');
+
+  // THE ASK. This is the entire review-collection mechanism: no review is ever
+  // scraped, so the only ratings that exist are the ones people text back
+  // after actually eating. Saying it out loud at recommendation time is what
+  // makes the check-in two hours later land as expected rather than intrusive.
+  if (willFollowUp) {
+    lines.push('text me how it was after, out of 10');
+  }
+
+  const reply = replyText(message, lines.join(' '));
+
+  if (willFollowUp) {
     const [top, ...rest] = withPhi;
     scheduleFollowUp(
       deps.store,
@@ -417,7 +427,10 @@ export function scheduleFollowUp(
 export function buildFollowUpMessage(pending: PendingFollowUp): OutboundMessage {
   return {
     conversationId: pending.conversationId,
-    text: `How was the ${pending.dishName}?`,
+    // Asking for a number out of ten is the whole review-collection mechanism:
+    // this product never ingests a scraped review, so the only ratings that
+    // exist are the ones people text back here.
+    text: `hows the ${pending.dishName}? out of 10`,
     kind: 'follow_up',
   };
 }
@@ -465,7 +478,34 @@ export async function sendDueFollowUps(
  * what lets "not bad at all" score as liked rather than hated, and "wasn't
  * great" score as disliked rather than liked. The first match wins.
  */
+/**
+ * Map a 1-10 reply onto the 1-5 scale the schema stores.
+ *
+ * contracts/schema.sql pins `logs.rating` to `between 1 and 5` and is frozen,
+ * so out-of-ten is an INPUT convention only: people think in tens when they
+ * text, and asking for a five point scale gets you sevens anyway. Halving and
+ * rounding keeps the ordering intact, and the floor stops a 1 becoming a 0 and
+ * violating the check constraint.
+ */
+export function tenToFive(n: number): number {
+  return Math.max(1, Math.min(5, Math.round(n / 2)));
+}
+
 const RATING_RULES: ReadonlyArray<{ pattern: RegExp; rating: number }> = [
+  // Out of ten, checked FIRST. This is what the follow-up actually asks for,
+  // so it is the most common reply shape and must not fall through to a rule
+  // that happens to see a stray digit.
+  { pattern: /\b10\s*(?:\/\s*10|out of (?:10|ten))/i, rating: tenToFive(10) },
+  { pattern: /\b9\s*(?:\/\s*10|out of (?:10|ten))/i, rating: tenToFive(9) },
+  { pattern: /\b8\s*(?:\/\s*10|out of (?:10|ten))/i, rating: tenToFive(8) },
+  { pattern: /\b7\s*(?:\/\s*10|out of (?:10|ten))/i, rating: tenToFive(7) },
+  { pattern: /\b6\s*(?:\/\s*10|out of (?:10|ten))/i, rating: tenToFive(6) },
+  { pattern: /\b5\s*(?:\/\s*10|out of (?:10|ten))/i, rating: tenToFive(5) },
+  { pattern: /\b4\s*(?:\/\s*10|out of (?:10|ten))/i, rating: tenToFive(4) },
+  { pattern: /\b3\s*(?:\/\s*10|out of (?:10|ten))/i, rating: tenToFive(3) },
+  { pattern: /\b2\s*(?:\/\s*10|out of (?:10|ten))/i, rating: tenToFive(2) },
+  { pattern: /\b1\s*(?:\/\s*10|out of (?:10|ten))/i, rating: tenToFive(1) },
+
   // Explicit numeric or star ratings.
   { pattern: /\b5\s*(?:\/\s*5|out of (?:5|five)|stars?)\b/i, rating: 5 },
   { pattern: /\b4\s*(?:\/\s*5|out of (?:5|five)|stars?)\b/i, rating: 4 },
@@ -554,8 +594,16 @@ export function parseFollowUpReply(text: string): number | null {
   const trimmed = (text ?? '').trim();
   if (trimmed.length === 0) return null;
 
-  const bare = trimmed.match(/^([1-5])(?:\s*\/\s*5)?[.!\s]*$/);
-  if (bare) return Number(bare[1]);
+  // A bare number is the single most likely reply, because the follow-up asks
+  // for one. It is read as OUT OF TEN unless the person writes /5 themselves:
+  // the question set the frame, and someone answering "8" to "how was it out
+  // of 10" plainly does not mean 8 on a five point scale.
+  const bare = trimmed.match(/^(10|[1-9])(?:\s*\/\s*(10|5))?[.!\s]*$/);
+  if (bare) {
+    const n = Number(bare[1]);
+    if (bare[2] === '5') return Math.min(5, n);
+    return tenToFive(n);
+  }
 
   for (const rule of RATING_RULES) {
     if (rule.pattern.test(trimmed)) return rule.rating;
@@ -653,7 +701,7 @@ function buildConsequenceSentence(params: {
 }
 
 const CLARIFY_TEXT =
-  'I could not tell if that was good or bad. A word like better, worse, or fine, or a number one through five, is enough.';
+  'cant tell if that was good or bad. just a number out of 10 is enough';
 
 /**
  * Apply a parsed reply to the pending follow-up: resolve it, log it, refit
@@ -718,22 +766,71 @@ function classifyTextIntent(text: string): 'venue_overview' | 'priced_search' | 
   return 'unknown';
 }
 
-function handlePlainText(message: InboundMessage): OutboundMessage {
+/**
+ * Where a person goes to build a taste profile.
+ *
+ * Read at call time so the deployed URL is configuration, not a rebuild. The
+ * default is the live deployment rather than localhost, because the one place
+ * this string is ever read is a message going out to somebody's phone, and a
+ * localhost link there is worse than no link.
+ */
+function calibrationUrl(): string {
+  const base = (
+    process.env.NEXT_PUBLIC_SITE_URL ?? 'https://corgi-hackathon-alpha.vercel.app'
+  ).replace(/\/$/, '');
+  return `${base}/duel`;
+}
+
+/**
+ * How many duels before the agent stops leading with the calibration link.
+ *
+ * Below this, a recommendation would be built on a theta that is mostly the
+ * population prior (see core/model.ts shrinkage), so the honest move is to ask
+ * for taste data rather than to guess and sound confident about it.
+ */
+const CALIBRATION_PROMPT_FLOOR = 12;
+
+/**
+ * The onboarding reply. This is the agent's growth loop: a cold text turns into
+ * a link, the link builds a real profile, and only then does the agent claim to
+ * know anything about the person.
+ */
+function calibrationInvite(nComparisons: number): string {
+  if (nComparisons === 0) {
+    return (
+      `hey, i dont know how you eat yet so anything i said would be a guess. ` +
+      `swipe through some dishes here and ill actually be useful: ${calibrationUrl()}`
+    );
+  }
+  return (
+    `ive got a rough read on you but not enough to be confident. ` +
+    `a few more here and ill stop hedging: ${calibrationUrl()}`
+  );
+}
+
+function handlePlainText(message: InboundMessage, state: UserState): OutboundMessage {
+  // Anyone who has not calibrated gets the link first, whatever they asked.
+  // Answering a stranger's "what's good here" with a confident pick is exactly
+  // the crowd-average recommendation this product exists to not be.
+  if (state.nComparisons < CALIBRATION_PROMPT_FLOOR) {
+    return replyText(message, calibrationInvite(state.nComparisons));
+  }
+
   const intent = classifyTextIntent(message.text);
   if (intent === 'venue_overview') {
-    return replyText(message, 'Send a photo of the menu and I will tell you what to get.');
+    return replyText(message, 'send me a photo of the menu and ill tell you what to get');
   }
   if (intent === 'priced_search') {
     const match = message.text.match(PRICE_RE);
     const ceiling = match ? ` under $${match[1]}` : '';
     return replyText(
       message,
-      `I cannot search menus by text yet${ceiling}. Send a photo of one and I will work from that.`,
+      `cant search menus by text yet${ceiling}, sorry. snap a photo of one and ill work from that`,
     );
   }
   return replyText(
     message,
-    'Send a photo of a menu and I will tell you what to get, or tell me how the last thing I sent you went.',
+    'send me a menu photo and ill tell you what to get, or tell me how the last thing i sent you went',
   );
 }
 
@@ -785,7 +882,10 @@ export async function handleInboundMessage(message: InboundMessage, deps: Handle
       const rating = parseFollowUpReply(message.text);
       outbound.push(rating === null ? replyText(message, CLARIFY_TEXT) : await applyFollowUpReply(message, active, rating, deps));
     } else {
-      outbound.push(handlePlainText(message));
+      const state = await (deps.getUserState ?? (() => Promise.resolve(defaultUserState())))(
+        message.conversation.id,
+      );
+      outbound.push(handlePlainText(message, state));
     }
   }
 

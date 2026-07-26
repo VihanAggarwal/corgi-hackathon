@@ -69,11 +69,25 @@ function deps(transport: Transport, store: AgentStore, extra: Partial<HandlerDep
 
 describe('parseFollowUpReply', () => {
   const cases: Array<[string, number | null]> = [
-    ['5', 5],
-    ['4/5', 4],
-    ['3', 3],
-    ['2', 2],
+    // A BARE NUMBER IS OUT OF TEN, because that is what the follow-up asks
+    // for. Someone answering "8" to "how was it out of 10" does not mean 8 on
+    // a five point scale. Stored on the frozen 1-5 schema via tenToFive.
+    ['10', 5],
+    ['9', 5],
+    ['8', 4],
+    ['7', 4],
+    ['6', 3],
+    ['5', 3],
+    ['3', 2],
+    ['2', 1],
     ['1', 1],
+    ['8/10', 4],
+    ['2/10', 1],
+    ['10/10', 5],
+    ['7 out of 10', 4],
+    // An explicit /5 is still honored: the person overrode the frame.
+    ['4/5', 4],
+    ['5/5', 5],
     ['5 stars', 5],
     ['4 out of 5', 4],
     ['it was amazing', 5],
@@ -251,7 +265,7 @@ describe('the follow-up reply moves theta and the reply reflects the real delta'
       deps(transport, store),
     );
 
-    expect(outbound[0].text).toMatch(/could not tell/i);
+    expect(outbound[0].text).toMatch(/cant tell/i);
     // Still active: a garbled reply must not silently close out the follow-up.
     expect(store.activeFollowUp('conv_u')).not.toBeNull();
   });
@@ -319,7 +333,7 @@ describe('scheduleFollowUp and sendDueFollowUps', () => {
     const due = new Date(start.getTime() + FOLLOW_UP_DELAY_MS + 1000);
     const sentFirst = await sendDueFollowUps(store, transport, () => due);
     expect(sentFirst).toHaveLength(1);
-    expect(sentFirst[0].text).toBe('How was the paneer tikka?');
+    expect(sentFirst[0].text).toBe('hows the paneer tikka? out of 10');
     expect(sentFirst[0].kind).toBe('follow_up');
     expect(transport.sent).toHaveLength(1);
 
@@ -519,19 +533,78 @@ describe('inbound photo', () => {
 // ---------------------------------------------------------------------------
 
 describe('plain text queries', () => {
+  /** A person who has calibrated, so the agent may answer rather than onboard. */
+  const calibrated = (transport: Transport, store: ReturnType<typeof createInMemoryAgentStore>) => ({
+    ...deps(transport, store),
+    getUserState: async () => ({ theta: new Array(24).fill(0), nComparisons: 40 }),
+  });
+
   it('never fabricates a recommendation: it points back to a surface that can produce one', async () => {
     const store = createInMemoryAgentStore();
     const transport = createStubTransport();
 
-    const overview = await handleInboundMessage(inboundText({ text: 'what do I get here' }), deps(transport, store));
+    const overview = await handleInboundMessage(
+      inboundText({ text: 'what do I get here' }),
+      calibrated(transport, store),
+    );
     expect(overview[0].text).toMatch(/photo/i);
 
     const priced = await handleInboundMessage(
       inboundText({ messageId: 'msg_p', text: 'find me lunch under $20' }),
-      deps(transport, store),
+      calibrated(transport, store),
     );
     expect(priced[0].text).toContain('$20');
     expect(priced[0].text).toMatch(/photo/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // Onboarding: a cold text becomes a calibration link, not a guess.
+  // -------------------------------------------------------------------------
+
+  it('sends an uncalibrated person to the site instead of guessing at their taste', async () => {
+    const store = createInMemoryAgentStore();
+    const transport = createStubTransport();
+
+    const out = await handleInboundMessage(
+      inboundText({ text: 'what do I get here' }),
+      deps(transport, store),
+    );
+
+    // The link is the payload. Answering a stranger confidently would be the
+    // crowd-average recommendation this product exists not to be.
+    expect(out[0].text).toContain('/duel');
+    expect(out[0].text).toMatch(/dont know how you eat/i);
+    expect(out[0].text).not.toMatch(/photo/i);
+  });
+
+  it('still onboards a partially calibrated person, and says why', async () => {
+    const store = createInMemoryAgentStore();
+    const transport = createStubTransport();
+
+    const out = await handleInboundMessage(inboundText({ text: 'hey' }), {
+      ...deps(transport, store),
+      getUserState: async () => ({ theta: new Array(24).fill(0), nComparisons: 4 }),
+    });
+
+    expect(out[0].text).toContain('/duel');
+    // Different copy from the cold case: it acknowledges the duels already played.
+    expect(out[0].text).toMatch(/rough read/i);
+  });
+
+  it('writes like a text message, not a review', async () => {
+    const store = createInMemoryAgentStore();
+    const transport = createStubTransport();
+
+    const out = await handleInboundMessage(
+      inboundText({ text: 'what do I get here' }),
+      calibrated(transport, store),
+    );
+    const text = out[0].text;
+
+    // Hard rule 6 survives the register change: informal is not excited.
+    expect(text).not.toMatch(/[!]/);
+    expect(text).not.toMatch(/\bI\b/); // lowercase "i" only
+    expect(text[0]).toBe(text[0].toLowerCase());
   });
 });
 

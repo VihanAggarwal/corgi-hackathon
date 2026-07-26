@@ -46,7 +46,7 @@ describe('POST /api/agent/tick', () => {
 
     const transport = resolveTransport() as StubTransport;
     expect(transport.sent).toHaveLength(1);
-    expect(transport.sent[0].text).toBe('How was the bibimbap?');
+    expect(transport.sent[0].text).toBe('hows the bibimbap? out of 10');
   });
 
   it('sends nothing, and errors nothing, when no follow-up is due yet', async () => {
