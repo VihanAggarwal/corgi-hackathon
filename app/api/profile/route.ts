@@ -18,6 +18,7 @@ import { computeTwinsForIdentity } from '@/lib/api/twins';
 import { queryObject } from '@/lib/api/validate';
 import { lookupDish } from '@/lib/store/corpus';
 import { getOrCreateIdentity } from '@/lib/store/memory';
+import { hydrateIdentity } from '@/lib/store/persist';
 
 export async function GET(request: Request): Promise<Response> {
   return withApiHandler(async () => {
@@ -26,6 +27,9 @@ export async function GET(request: Request): Promise<Response> {
     enforceRateLimit(rateLimitKey('profile', request, identity), LIMITS.profile);
 
     const stored = getOrCreateIdentity(identityKey(identity), identity.deviceId, identity.userId);
+    // Cold serverless instances hold an empty Map; replay stored duels so a
+    // calibrated person is not reported as brand new. See lib/store/persist.
+    await hydrateIdentity(stored);
 
     const ratedDishes: RatedDish[] = [];
     for (const log of stored.logs) {

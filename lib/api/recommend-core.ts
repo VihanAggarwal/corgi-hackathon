@@ -36,6 +36,7 @@ import { computeTwinsForIdentity } from '@/lib/api/twins';
 import { identityKey, type Identity } from '@/lib/api/identity';
 import { withFallback } from '@/lib/resilience/call';
 import { DISHES, lookupDish, venueHood, venueName } from '@/lib/store/corpus';
+import { hydrateIdentity } from '@/lib/store/persist';
 import {
   getOrCreateIdentity,
   populationObservationsFor,
@@ -63,6 +64,11 @@ export async function recommendForIdentity(
 ): Promise<RenderedRecommendation[]> {
   const count = options.count ?? 3;
 
+  // A cold serverless instance holds an empty Map, so without this a person
+  // who swiped twenty dishes gets recommendations fitted on nothing. Idempotent
+  // and skipped entirely when the instance already has their duels.
+  await hydrateIdentity(stored);
+
   const ratedDishes: RatedDish[] = [];
   for (const log of stored.logs) {
     const dish = lookupDish(log.dishId);
@@ -70,12 +76,25 @@ export async function recommendForIdentity(
   }
   const region = computeRegion(ratedDishes);
 
-  // A recommendation for something already duelled is not a discovery.
+  // A recommendation for something already duelled is not much of a discovery,
+  // so unseen dishes are preferred.
+  //
+  // BUT THE CORPUS IS SMALLER THAN A CALIBRATION SESSION. Twelve duels expose
+  // up to twenty four dish slots against a twenty dish corpus, so anyone who
+  // finishes calibrating has "seen" everything and this filter empties the
+  // candidate list completely. The symptom is the agent saying "nothing came
+  // back that i'd actually stand behind" to the person who just did exactly
+  // what it asked, which is the worst possible moment to have nothing.
+  //
+  // Falling back to the whole corpus is also just true: seeing two photos side
+  // by side is not eating the dish, and picking one in a duel is a reason to
+  // recommend it, not a reason to withhold it.
   const unseen = DISHES.filter((d) => !stored.seenDishIds.has(d.id));
+  const pool = unseen.length > 0 ? unseen : DISHES;
 
   // Hard rule 3. The filter runs on the whole candidate list before ranking,
   // before a packet is built, and before any model call.
-  const { dishes: candidates, appliedCount } = await constraintFilteredDishes(identity, unseen);
+  const { dishes: candidates, appliedCount } = await constraintFilteredDishes(identity, pool);
 
   const frontierCandidates: FrontierCandidate[] = candidates.map((d) => ({
     dishId: d.id,

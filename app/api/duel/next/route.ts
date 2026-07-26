@@ -15,6 +15,7 @@ import { enforceRateLimit, LIMITS } from '@/lib/api/rate-limit';
 import { boundedInt, parseJsonObject } from '@/lib/api/validate';
 import { DISHES, type DishView, maskedIndicesForDish, toDishView } from '@/lib/store/corpus';
 import { dishAppearanceStats, getOrCreateIdentity } from '@/lib/store/memory';
+import { hydrateIdentity } from '@/lib/store/persist';
 
 export async function POST(request: Request): Promise<Response> {
   return withApiHandler(async () => {
@@ -24,6 +25,9 @@ export async function POST(request: Request): Promise<Response> {
 
     const count = boundedInt(body, 'count', { min: 1, max: 20, fallback: 10 });
     const stored = getOrCreateIdentity(identityKey(identity), identity.deviceId, identity.userId);
+    // Cold serverless instances hold an empty Map; replay stored duels so a
+    // calibrated person is not reported as brand new. See lib/store/persist.
+    await hydrateIdentity(stored);
 
     // Hard rule 3 in spirit as well as letter: a constraint should stop a dish
     // from being offered at all, not merely stop it from being narrated.

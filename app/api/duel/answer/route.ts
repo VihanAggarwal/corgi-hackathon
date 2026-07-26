@@ -16,6 +16,7 @@ import { enforceRateLimit, LIMITS } from '@/lib/api/rate-limit';
 import { parseJsonObject, requireEnum, requireString } from '@/lib/api/validate';
 import { lookupDish } from '@/lib/store/corpus';
 import { type DuelSurface, getOrCreateIdentity, recordDuel } from '@/lib/store/memory';
+import { hydrateIdentity, persistDuel } from '@/lib/store/persist';
 
 const SURFACES: readonly DuelSurface[] = ['feed', 'imessage', 'agent', 'demo'];
 
@@ -53,7 +54,15 @@ export async function POST(request: Request): Promise<Response> {
     }
 
     const stored = getOrCreateIdentity(identityKey(identity), identity.deviceId, identity.userId);
+    // Replay anything this instance has never seen BEFORE recording, or a cold
+    // instance would fit theta on one duel and report nComparisons of 1 to
+    // somebody who has swiped twenty.
+    await hydrateIdentity(stored);
     const updated = recordDuel(stored, dishA, dishB, winner, surface);
+
+    // Durable, and awaited so a serverless function cannot be frozen before
+    // the write lands. Best effort inside: a failure never fails the pick.
+    await persistDuel(identity.deviceId, dishA, dishB, winner, surface);
 
     return jsonOk({
       userVector: {
