@@ -47,9 +47,44 @@ import {
   type SendReceipt,
   type Transport,
 } from './transport';
-import { defaultAgentStore, handleInboundMessage, sendDueFollowUps } from './handlers';
-import { recommendForDevice } from '../../lib/api/recommend-core';
-import { getOrCreateIdentity } from '../../lib/store/memory';
+import {
+  conversationDeviceId,
+  defaultAgentStore,
+  handleInboundMessage,
+  sendDueFollowUps,
+} from './handlers';
+
+/**
+ * THE DEPLOYED API IS THE SOURCE OF TRUTH, NOT THIS PROCESS.
+ *
+ * The runner used to read its own in-process store, which meant the swipes a
+ * person did in the browser were invisible to it: the website runs on Vercel,
+ * the agent runs on this laptop, and each had a separate Map. Someone could
+ * calibrate perfectly and still be told "i dont know how you eat yet" forever.
+ *
+ * So profile and recommendation both go over HTTP to the same deployment the
+ * calibration link points at, keyed by the same device id that link carries.
+ * One store, one profile, both surfaces agreeing.
+ */
+const SITE = (
+  process.env.NEXT_PUBLIC_SITE_URL ?? 'https://corgi-hackathon-alpha.vercel.app'
+).replace(/\/$/, '');
+
+async function siteJson<T>(path: string, init?: RequestInit): Promise<T | null> {
+  try {
+    const res = await fetch(`${SITE}${path}`, {
+      ...init,
+      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!res.ok) return null;
+    return (await res.json()) as T;
+  } catch {
+    // Conference wifi is assumed to fail. A null here degrades to onboarding
+    // copy, which is wrong but harmless, rather than crashing the loop.
+    return null;
+  }
+}
 
 // Minimal structural views of the SDK objects we touch. Typed locally rather
 // than importing the SDK's 6,000-line union so a minor SDK bump cannot break
@@ -289,15 +324,28 @@ async function main(): Promise<void> {
       const replies = await handleInboundMessage(inbound, {
         transport,
         store,
-        // A conversation IS a device here: the person has no account, and the
-        // conversation id is the only stable handle we have for them. That is
-        // the same zero-install identity the web cards use.
+        // A conversation IS a device: the person has no account, and the
+        // conversation id is the only stable handle we have. conversationDeviceId
+        // must match what calibrationUrl puts in the link, or the swipes land
+        // under a profile nobody reads.
         getUserState: async (conversationId) => {
-          const s = getOrCreateIdentity(`device:${conversationId}`, conversationId, null);
-          return { theta: s.theta, nComparisons: s.nComparisons };
+          const id = conversationDeviceId(conversationId);
+          const profile = await siteJson<{
+            userVector?: { theta: number[]; nComparisons: number };
+          }>(`/api/profile?deviceId=${encodeURIComponent(id)}`, { method: 'GET' });
+          return {
+            theta: profile?.userVector?.theta ?? new Array(24).fill(0),
+            nComparisons: profile?.userVector?.nComparisons ?? 0,
+          };
         },
-        recommendForConversation: (conversationId) =>
-          recommendForDevice(conversationId, { count: 1 }),
+        recommendForConversation: async (conversationId) => {
+          const id = conversationDeviceId(conversationId);
+          const out = await siteJson<{ recommendations: Array<{ text: string }> }>(
+            '/api/recommend',
+            { method: 'POST', body: JSON.stringify({ deviceId: id, count: 1 }) },
+          );
+          return out?.recommendations ?? [];
+        },
       });
       for (const r of replies) console.log(`  -> ${r.text.slice(0, 80)}`);
     } catch (err) {

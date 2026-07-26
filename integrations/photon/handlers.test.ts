@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Photon handler tests. Track C.
  *
  * Four things this suite has to prove, because the Track C prompt calls them
@@ -22,6 +22,7 @@ import {
   FOLLOW_UP_DELAY_MS,
   GROUP_JOIN_ANNOUNCEMENT,
   handleInboundMessage,
+  conversationDeviceId,
   parseFollowUpReply,
   scheduleFollowUp,
   sendDueFollowUps,
@@ -134,7 +135,7 @@ describe('parseFollowUpReply', () => {
 // ---------------------------------------------------------------------------
 
 describe('the follow-up reply moves theta and the reply reflects the real delta', () => {
-  it('a disliked rating pulls theta down on the dish’s dominant axis, and the reply names that axis', () => {
+  it('a disliked rating pulls theta down on the dish dominant axis, and the reply names that axis', () => {
     const dishPhi = zeros();
     dishPhi[RICHNESS] = 3;
     const thetaAtSend = zeros();
@@ -561,25 +562,44 @@ describe('plain text queries', () => {
   // Onboarding: a cold text becomes a calibration link, not a guess.
   // -------------------------------------------------------------------------
 
-  it('sends an uncalibrated person to the site instead of guessing at their taste', async () => {
+  it('asks for the area first, and does not file the cold message as one', async () => {
     const store = createInMemoryAgentStore();
     const transport = createStubTransport();
 
-    const out = await handleInboundMessage(
-      inboundText({ text: 'what do I get here' }),
+    const first = await handleInboundMessage(
+      inboundText({ text: 'hey' }),
       deps(transport, store),
     );
 
-    // The link is the payload. Answering a stranger confidently would be the
-    // crowd-average recommendation this product exists not to be.
+    expect(first[0].text).toMatch(/what area are you in/i);
+    expect(first[0].text).not.toContain('/duel');
+    // The regression this guards: "hey" is a plausible looking neighborhood to
+    // a permissive matcher, and must not be recorded as one.
+    expect(store.area('conv_1')).toBeNull();
+  });
+
+  it('sends the link once it has an area, carrying the conversation id', async () => {
+    const store = createInMemoryAgentStore();
+    const transport = createStubTransport();
+
+    await handleInboundMessage(inboundText({ text: 'hey' }), deps(transport, store));
+    const out = await handleInboundMessage(
+      inboundText({ messageId: 'msg_area', text: 'lower east side' }),
+      deps(transport, store),
+    );
+
+    expect(store.area('conv_1')).toBe('lower east side');
     expect(out[0].text).toContain('/duel');
-    expect(out[0].text).toMatch(/dont know how you eat/i);
+    // Without d= the browser invents a random id and the swipes are orphaned.
+    expect(out[0].text).toMatch(/[?&]d=/);
+    expect(out[0].text).toMatch(/lower east side/i);
     expect(out[0].text).not.toMatch(/photo/i);
   });
 
   it('still onboards a partially calibrated person, and says why', async () => {
     const store = createInMemoryAgentStore();
     const transport = createStubTransport();
+    store.setArea('conv_1', 'astoria');
 
     const out = await handleInboundMessage(inboundText({ text: 'hey' }), {
       ...deps(transport, store),
@@ -589,6 +609,13 @@ describe('plain text queries', () => {
     expect(out[0].text).toContain('/duel');
     // Different copy from the cold case: it acknowledges the duels already played.
     expect(out[0].text).toMatch(/rough read/i);
+  });
+
+  it('gives the same device id for a conversation every time, or profiles fork', () => {
+    const a = conversationDeviceId('iMessage;-;+15551234567');
+    const b = conversationDeviceId('iMessage;-;+15551234567');
+    expect(a).toBe(b);
+    expect(a).toMatch(/^[A-Za-z0-9_-]{4,64}$/);
   });
 
   // -------------------------------------------------------------------------

@@ -152,6 +152,26 @@ export interface AgentStore {
 
   recordDishLog(entry: DishLogEntry): void;
   dishLogs(conversationId?: string): DishLogEntry[];
+
+  /**
+   * The neighborhood this person said they were in, or null if never asked.
+   *
+   * Asked BEFORE the calibration link rather than after, because a taste
+   * profile with nowhere to spend it is a survey. Knowing the area first also
+   * means the very first recommendation can be somewhere they can actually go.
+   */
+  area(conversationId: string): string | null;
+  setArea(conversationId: string, area: string): void;
+  /**
+   * Whether the area question has already gone out.
+   *
+   * Tracked separately from the answer, because without it the FIRST cold
+   * message gets recorded as the area: "hey" is a perfectly plausible looking
+   * neighborhood to a permissive matcher. A reply only counts as an area if we
+   * actually asked for one.
+   */
+  wasAreaAsked(conversationId: string): boolean;
+  markAreaAsked(conversationId: string): void;
 }
 
 /** Bounded so an unbounded stream of webhook traffic cannot grow these without limit. */
@@ -172,6 +192,8 @@ export function createInMemoryAgentStore(): AgentStore {
   const greetedGroups = new Set<string>();
   const pending = new Map<string, PendingFollowUp>();
   const logs: DishLogEntry[] = [];
+  const areas = new Map<string, string>();
+  const areaAsked = new Set<string>();
 
   return {
     wasProcessed(messageId) {
@@ -224,6 +246,20 @@ export function createInMemoryAgentStore(): AgentStore {
     },
     dishLogs(conversationId) {
       return conversationId ? logs.filter((l) => l.conversationId === conversationId) : [...logs];
+    },
+
+    area(conversationId) {
+      return areas.get(conversationId) ?? null;
+    },
+    setArea(conversationId, value) {
+      areas.set(conversationId, value);
+    },
+    wasAreaAsked(conversationId) {
+      return areaAsked.has(conversationId);
+    },
+    markAreaAsked(conversationId) {
+      areaAsked.add(conversationId);
+      prune(areaAsked, MAX_TRACKED_IDS);
     },
   };
 }
@@ -774,11 +810,56 @@ function classifyTextIntent(text: string): 'venue_overview' | 'priced_search' | 
  * this string is ever read is a message going out to somebody's phone, and a
  * localhost link there is worse than no link.
  */
-function calibrationUrl(): string {
+function calibrationUrl(conversationId: string, area: string | null): string {
   const base = (
     process.env.NEXT_PUBLIC_SITE_URL ?? 'https://corgi-hackathon-alpha.vercel.app'
   ).replace(/\/$/, '');
-  return `${base}/duel`;
+
+  // The `d` parameter is what makes the whole loop close. Without it the
+  // browser invents a random local id, the swipes land under a profile the
+  // agent has never heard of, and someone can calibrate perfectly and still
+  // get told "i dont know how you eat yet" forever. That was a real bug.
+  const params = new URLSearchParams({ d: conversationDeviceId(conversationId) });
+  if (area) params.set('area', area);
+  return `${base}/duel?${params.toString()}`;
+}
+
+/**
+ * A conversation id, made safe to use as a device id.
+ *
+ * Provider ids can carry characters that do not survive a URL or the device id
+ * pattern the API validates against, so this is narrowed rather than passed
+ * through. Deterministic, because the same conversation has to resolve to the
+ * same profile on every message, forever.
+ */
+export function conversationDeviceId(conversationId: string): string {
+  const cleaned = conversationId.replace(/[^A-Za-z0-9_-]/g, '').slice(0, 48);
+  return cleaned.length >= 4 ? cleaned : `c${hashId(conversationId)}`;
+}
+
+function hashId(s: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/**
+ * Whether a reply reads as an answer to "what area are you in".
+ *
+ * Deliberately permissive: almost any short text after being asked a location
+ * question is a location. The guard is against a reply that is obviously
+ * something else, such as a question back, so the agent does not record "why?"
+ * as a neighborhood.
+ */
+function looksLikeArea(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 2 || t.length > 60) return false;
+  if (t.includes('?')) return false;
+  if (/^\d+(\s*\/\s*10)?$/.test(t)) return false;
+  return /[a-z]/i.test(t) || /^\d{5}$/.test(t);
 }
 
 /**
@@ -795,29 +876,53 @@ const CALIBRATION_PROMPT_FLOOR = 12;
  * a link, the link builds a real profile, and only then does the agent claim to
  * know anything about the person.
  */
-function calibrationInvite(nComparisons: number): string {
+function calibrationInvite(
+  nComparisons: number,
+  conversationId: string,
+  area: string,
+): string {
+  const url = calibrationUrl(conversationId, area);
   if (nComparisons === 0) {
     return (
-      `hey, i dont know how you eat yet so anything i said would be a guess. ` +
-      `swipe through some dishes here and ill actually be useful: ${calibrationUrl()}`
+      `cool, ${area}. i dont know how you eat yet tho, so anything i said would be a guess. ` +
+      `swipe through these and ill actually be useful: ${url}`
     );
   }
   return (
     `ive got a rough read on you but not enough to be confident. ` +
-    `a few more here and ill stop hedging: ${calibrationUrl()}`
+    `a few more here and ill stop hedging: ${url}`
   );
 }
+
+const AREA_QUESTION =
+  'hey. what area are you in? ill only send you places you can actually get to';
 
 async function handlePlainText(
   message: InboundMessage,
   state: UserState,
   deps: HandlerDeps,
 ): Promise<OutboundMessage> {
-  // Anyone who has not calibrated gets the link first, whatever they asked.
-  // Answering a stranger's "what's good here" with a confident pick is exactly
-  // the crowd-average recommendation this product exists to not be.
+  const convId = message.conversation.id;
+  const knownArea = deps.store.area(convId);
+
+  // ONBOARDING IS TWO STEPS, AREA THEN TASTE.
+  //
+  // The area comes first because a taste profile with nowhere to spend it is
+  // just a survey, and because the first recommendation after calibrating
+  // should be somewhere they can actually walk to.
   if (state.nComparisons < CALIBRATION_PROMPT_FLOOR) {
-    return replyText(message, calibrationInvite(state.nComparisons));
+    if (!knownArea) {
+      // A reply only counts as an area if the question actually went out
+      // first, otherwise a cold "hey" gets filed as a neighborhood.
+      if (deps.store.wasAreaAsked(convId) && looksLikeArea(message.text)) {
+        const area = message.text.trim();
+        deps.store.setArea(convId, area);
+        return replyText(message, calibrationInvite(state.nComparisons, convId, area));
+      }
+      deps.store.markAreaAsked(convId);
+      return replyText(message, AREA_QUESTION);
+    }
+    return replyText(message, calibrationInvite(state.nComparisons, convId, knownArea));
   }
 
   const intent = classifyTextIntent(message.text);
