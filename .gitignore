@@ -43,3 +43,10 @@ next-env.d.ts
 # local track kit (not part of the app)
 /track-b-surfaces
 .env.local
+
+# corpus pipeline output: large, regenerable, and a rerun rebuilds it exactly.
+# The human verdicts are the one thing here that cannot be regenerated, so they
+# are committed deliberately.
+scripts/corpus/.checkpoints/*
+!scripts/corpus/.checkpoints/verified.json
+scripts/corpus/.cache/
