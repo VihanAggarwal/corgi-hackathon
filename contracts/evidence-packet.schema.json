@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "EvidencePacket",
+  "description": "The ONLY object the LLM renderer ever sees. Contains no user identities, no constraint values, no reliability scores. Any rendered sentence not grounded in a field here is a bug.",
+  "type": "object",
+  "required": ["userAxes", "dish", "caveats", "sourceChannel", "confidence", "constraintsAppliedCount"],
+  "additionalProperties": false,
+  "properties": {
+    "userAxes": {
+      "type": "array", "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["axis", "label", "value", "percentile"],
+        "properties": {
+          "axis": {"type": "string"},
+          "label": {"type": "string"},
+          "value": {"type": "number"},
+          "percentile": {"type": "number", "minimum": 0, "maximum": 100}
+        }
+      }
+    },
+    "dish": {
+      "type": "object",
+      "required": ["name", "venueName", "neighborhood", "phiConfidence"],
+      "properties": {
+        "name": {"type": "string"},
+        "venueName": {"type": "string"},
+        "neighborhood": {"type": "string"},
+        "priceCents": {"type": ["integer", "null"]},
+        "phiConfidence": {"enum": ["high", "medium", "low"]}
+      }
+    },
+    "twinSupport": {
+      "type": "object",
+      "description": "ABSENT ENTIRELY when the twin channel did not fire. If absent, the renderer must not mention twins in any form.",
+      "required": ["n", "lift", "kFloorMet", "clusterDescriptor"],
+      "properties": {
+        "n": {"type": "integer", "minimum": 5},
+        "lift": {"type": "number", "minimum": 0.15},
+        "kFloorMet": {"const": true},
+        "clusterDescriptor": {"type": "string"}
+      }
+    },
+    "populationBaseline": {
+      "type": "object",
+      "properties": {
+        "topDishName": {"type": "string"},
+        "topDishShare": {"type": "number"}
+      }
+    },
+    "caveats": {
+      "type": "array",
+      "description": "MANDATORY in output when non-empty.",
+      "items": {
+        "type": "object",
+        "required": ["source", "n", "claim"],
+        "properties": {
+          "source": {"enum": ["twin_note", "extraction", "venue_data"]},
+          "n": {"type": "integer"},
+          "claim": {"type": "string"}
+        }
+      }
+    },
+    "expansion": {
+      "type": "object",
+      "properties": {
+        "outsideRegion": {"type": "boolean"},
+        "axis": {"type": "string"},
+        "distance": {"enum": ["adjacent", "far"]}
+      }
+    },
+    "sourceChannel": {"enum": ["twin", "content", "agent_vision"]},
+    "confidence": {"enum": ["high", "medium", "low"]},
+    "constraintsAppliedCount": {
+      "type": "integer",
+      "description": "COUNT ONLY. Never the values, never the kinds, never whose."
+    }
+  }
+}
