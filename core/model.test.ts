@@ -192,6 +192,33 @@ describe('fitTheta', () => {
     expect(isThetaStable(fit)).toBe(false);
   });
 
+  // -------------------------------------------------------------------------
+  // Step-size stability. This caught a real divergence, keep it.
+  // -------------------------------------------------------------------------
+
+  it('stays bounded at very low n, where the ridge term is largest', () => {
+    // ridge = lambda / n, so n = 1 is the worst case for step stability. With a
+    // fixed learning rate this produced |theta| ~ 1e16 rather than a number.
+    const truth = sparseTheta();
+    for (const n of [1, 2, 3, 5]) {
+      for (const lambda of [6, 25, 100]) {
+        const fit = fitTheta(duelsFrom(truth, n), { lambda });
+        const mag = Math.sqrt(fit.theta.reduce((s, x) => s + x * x, 0));
+        expect(Number.isFinite(mag)).toBe(true);
+        // A handful of duels can never justify a large vector.
+        expect(mag).toBeLessThan(3);
+      }
+    }
+  });
+
+  it('does not diverge on large difference vectors', () => {
+    // Extreme dishes make |d|^2 large, which raises the curvature bound.
+    const big = new Array(AXIS_COUNT).fill(3);
+    const small = new Array(AXIS_COUNT).fill(-3);
+    const fit = fitTheta([{ winnerPhi: big, loserPhi: small }], { lambda: 25 });
+    expect(fit.theta.every((v) => Number.isFinite(v) && Math.abs(v) < 3)).toBe(true);
+  });
+
   it('produces finite values on degenerate input', () => {
     // Two identical dishes: zero difference vector, zero information.
     const flat = new Array(AXIS_COUNT).fill(1);

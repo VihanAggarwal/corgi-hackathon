@@ -116,6 +116,35 @@ export function fitTheta(observations: FitObservation[], options: FitOptions = {
   if (n > 0) {
     // Ridge strength per observation keeps the penalty scale-free in n.
     const ridge = lambda / Math.max(n, 1);
+
+    // ---------------------------------------------------------------------
+    // STEP SIZE STABILITY. Do not remove this.
+    //
+    // A fixed learning rate diverges here, and it does so silently. The
+    // parameter update is theta <- theta * (1 - lr * ridge) + ..., so the
+    // iteration is only stable while lr * ridge < 2. Since ridge is
+    // lambda / n, a user with one or two duels gets an enormous ridge: at
+    // lambda 25 and n 1 the multiplier is |1 - 8.75| = 7.75 per iteration,
+    // and over 400 iterations theta reaches 1e16.
+    //
+    // That is not a slow-convergence problem, it is garbage, and it hits
+    // exactly the users a live demo produces: the ones who just started.
+    // Symptomatically it looks like a selection bug, because downstream
+    // p(1-p) underflows to zero and the duel selector then finds no
+    // informative pair anywhere.
+    //
+    // The objective's curvature is bounded above by
+    //   0.25 * mean(|d|^2) + ridge
+    // (the logistic term p(1-p) never exceeds 1/4), so a step of
+    // 1 / thatBound is guaranteed stable. Take the smaller of the requested
+    // rate and the safe one.
+    // ---------------------------------------------------------------------
+    let meanSqNorm = 0;
+    for (const d of diffs) meanSqNorm += dot(d, d);
+    meanSqNorm /= n;
+    const curvatureBound = 0.25 * meanSqNorm + ridge;
+    const step = Math.min(learningRate, 1 / Math.max(curvatureBound, 1e-9));
+
     for (let iter = 0; iter < iterations; iter++) {
       const grad = zeros();
       for (let k = 0; k < n; k++) {
@@ -128,7 +157,7 @@ export function fitTheta(observations: FitObservation[], options: FitOptions = {
       for (let i = 0; i < AXIS_COUNT; i++) {
         // Average gradient, minus the pull toward the prior.
         const g = grad[i] / n - ridge * (theta[i] - prior[i]);
-        theta[i] += learningRate * g;
+        theta[i] += step * g;
       }
     }
   }
