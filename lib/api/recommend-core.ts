@@ -192,7 +192,10 @@ export async function recommendForIdentity(
     }
 
     const rendered = await withFallback<RenderedRecommendation | null>(
-      () => renderRecommendation(packet),
+      // dishId was never passed here, so every recommendation came back with
+      // dishId: null, the agent's exclude set stayed permanently empty, and
+      // the same handful of picks repeated on every ask. This is that fix.
+      () => renderRecommendation(packet, { dishId: dish.id }),
       () => null,
       { dependency: 'render', timeoutMs: 8000, attempts: 1, budgetMs: 8000 },
     );

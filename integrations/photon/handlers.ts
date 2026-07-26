@@ -49,6 +49,7 @@
 import { AXES, AXIS_COUNT, AXIS_KEYS, type AxisKey } from '../../contracts/axes';
 import type { Vec24 } from '../../contracts/types';
 import { fitTheta, type FitObservation } from '../../core';
+import { converseReply } from '../../lib/api/agent-voice';
 import { menuPhotoToOrder, type MenuOrderInput, type MenuOrderResult, type MenuPhoto } from '../../integrations/vision';
 import {
   isLikelyImage,
@@ -1046,10 +1047,14 @@ async function handlePlainText(
   // ("something spicy", "under $20") skips straight to the picks, because
   // asking a question they already answered is its own kind of robotic.
   if (isBareOpener(message.text)) {
-    return [
-      replyText(message, 'yo wsg'),
-      replyText(message, 'any new flavour prefs or what we feeling tod'),
-    ];
+    const smart = await converseReply({
+      message: message.text,
+      area: knownArea,
+      calibrated: true,
+      picks: null,
+    });
+    const lines = smart ?? ['yo wsg', 'any new flavour prefs or what we feeling tod'];
+    return lines.map((t) => replyText(message, t));
   }
 
   const intent = classifyTextIntent(message.text);
@@ -1061,10 +1066,17 @@ async function handlePlainText(
   // as the agent forgetting what it is for. One line acknowledging what was
   // said, one line steering back, nothing longer.
   if (intent === 'off_topic') {
-    return [
-      replyText(message, "lol im just here for the food stuff, cant help with that"),
-      replyText(message, 'what are you feeling tho, ill find you something'),
+    const smart = await converseReply({
+      message: message.text,
+      area: knownArea,
+      calibrated: true,
+      picks: null,
+    });
+    const lines = smart ?? [
+      "lol im just here for the food stuff, cant help with that",
+      'what are you feeling tho, ill find you something',
     ];
+    return lines.map((t) => replyText(message, t));
   }
 
   // A CALIBRATED PERSON ASKING WHERE TO EAT GETS A RECOMMENDATION.
@@ -1079,7 +1091,15 @@ async function handlePlainText(
       try {
         const picks = await recommend(message.conversation.id, knownArea);
         if (picks.length > 0) {
-          return composeOptions(picks, knownArea).map((t) => replyText(message, t));
+          const pickTexts = picks.map((p) => p.text);
+          const smart = await converseReply({
+            message: message.text,
+            area: knownArea,
+            calibrated: true,
+            picks: pickTexts,
+          });
+          const lines = smart ?? composeOptions(picks, knownArea);
+          return lines.map((t) => replyText(message, t));
         }
       } catch {
         // Fall through to the honest non-answer below rather than surfacing a
