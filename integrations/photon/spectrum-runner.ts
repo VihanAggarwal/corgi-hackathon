@@ -342,7 +342,9 @@ async function main(): Promise<void> {
           const id = conversationDeviceId(conversationId);
           const out = await siteJson<{ recommendations: Array<{ text: string }> }>(
             '/api/recommend',
-            { method: 'POST', body: JSON.stringify({ deviceId: id, count: 1 }) },
+            // Three, because a friend texts back a short list, not one answer.
+            // composeOptions trims and formats whatever comes back.
+            { method: 'POST', body: JSON.stringify({ deviceId: id, count: 3 }) },
           );
           return out?.recommendations ?? [];
         },

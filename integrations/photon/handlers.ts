@@ -718,22 +718,32 @@ function buildConsequenceSentence(params: {
   axis: AxisMove | null;
   flips: number;
 }): string {
+  // THE SIGN OFF IS THE POINT OF THE WHOLE EXCHANGE.
+  //
+  // Someone just did unpaid labor for the model. Acknowledging it warmly, and
+  // saying plainly what it changed, is the difference between a person helping
+  // a friend and a person filling in a form. Exclamation marks are allowed
+  // HERE and nowhere else: hard rule 6 bans enthusiasm in RECOMMENDATIONS,
+  // because there it is the tell of a blast. In a thank you it is just how
+  // people text.
+  const thanks = 'appreciate it, genuinely. talk soon';
+
   if (params.rating === 3) {
-    return `Noted, right down the middle on the ${params.dishName}. Nothing changes about what I send you next.`;
+    return `noted, right down the middle on the ${params.dishName}. doesnt move anything, which is its own kind of useful. ${thanks}`;
   }
   if (!params.axis) {
-    return `Noted on the ${params.dishName}. Not enough signal there yet to move anything.`;
+    return `noted on the ${params.dishName}. not enough signal there to move anything yet. ${thanks}`;
   }
-  const base = `Noted, pulling your ${params.axis.label} ${params.axis.direction}.`;
-  if (params.flips === 0) return base;
+
+  const base = `got it, pulling your ${params.axis.label} ${params.axis.direction}`;
+  if (params.flips === 0) return `${base}. ${thanks}`;
 
   const noun = params.flips === 1 ? 'place' : 'places';
-  const verb = params.axis.direction === 'down' ? 'drops' : 'opens up';
   const tail =
     params.axis.direction === 'down'
-      ? `${verb} ${spell(params.flips)} ${noun} I was about to send you`
-      : `${verb} ${spell(params.flips)} more ${noun} worth trying`;
-  return `${base} That also ${tail}.`;
+      ? `that also drops ${spell(params.flips)} ${noun} i was about to send you`
+      : `that also opens up ${spell(params.flips)} more ${noun} worth trying`;
+  return `${base}. ${tail}. ${thanks}`;
 }
 
 const CLARIFY_TEXT =
@@ -902,6 +912,34 @@ function calibrationInvite(
 const AREA_QUESTION =
   'hey. what area are you in? ill only send you places you can actually get to';
 
+/**
+ * Two or three options in one message, the way a friend answers.
+ *
+ * Nobody texts back a single restaurant and stops. A short list with the
+ * strongest first, a reason attached to each, and one question at the end
+ * reads like a person; one confident pick reads like a search result.
+ *
+ * The trailing ask is what makes the review loop exist at all: no rating is
+ * ever scraped, so one only exists if somebody sends it.
+ */
+function composeOptions(picks: Array<{ text: string }>, area: string | null): string {
+  const top = picks.slice(0, 3);
+  if (top.length === 1) {
+    return `${top[0].text} lmk how it goes, out of 10 after`;
+  }
+
+  const lines = [
+    area ? `ok ${area}, few ideas:` : 'ok, few ideas:',
+    ...top.map((p, i) => `${i + 1}. ${p.text}`),
+  ];
+  lines.push(
+    top.length > 2
+      ? 'the first ones my pick tbh. whichever you go with, text me a number out of 10 after'
+      : 'either works. text me a number out of 10 after so i learn something',
+  );
+  return lines.join('\n');
+}
+
 async function handlePlainText(
   message: InboundMessage,
   state: UserState,
@@ -944,9 +982,7 @@ async function handlePlainText(
       try {
         const picks = await recommend(message.conversation.id);
         if (picks.length > 0) {
-          // The ask that makes the whole review loop work. No review is ever
-          // scraped, so a rating only exists if somebody texts it back.
-          return replyText(message, `${picks[0].text} text me how it was after, out of 10`);
+          return replyText(message, composeOptions(picks, knownArea));
         }
       } catch {
         // Fall through to the honest non-answer below rather than surfacing a
