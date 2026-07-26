@@ -16,7 +16,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { AXES, AXIS_COUNT, AXIS_KEYS, type AxisKey } from '../../contracts/axes';
 import { CONSTANTS, type Conf24, type DishVector, type Vec24 } from '../../contracts/types';
-import { DRY_RUN, EXTRACTION_MODEL, KEYS } from './config';
+import { anthropicClientOptions, DRY_RUN, EXTRACTION_MODEL } from './config';
 
 export interface MenuItem {
   /** Stable key for checkpointing: `${venueGPlaceId}::${dishName}` */
@@ -227,7 +227,8 @@ function dryRunExtract(items: MenuItem[]): ExtractionResult[] {
 
 let client: Anthropic | null = null;
 function anthropic(): Anthropic {
-  if (!client) client = new Anthropic({ apiKey: KEYS.anthropic });
+  // Routed through Merge Gateway when configured; see anthropicClientOptions.
+  if (!client) client = new Anthropic(anthropicClientOptions());
   return client;
 }
 

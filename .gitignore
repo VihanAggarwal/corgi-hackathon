@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# .env.example carries no secrets and is the only record of what a new machine
+# needs. Committing it deliberately.
+!.env.example
 
 # vercel
 .vercel

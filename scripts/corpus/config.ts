@@ -52,6 +52,45 @@ export const KEYS = {
 };
 
 /**
+ * Optional Merge Gateway routing for model calls.
+ *
+ * Gateway sits between us and the model providers: failover when one degrades,
+ * plus cost and latency observability across the corpus run, which is by far
+ * our largest token spend. Conference wifi is assumed to fail at least once, so
+ * provider failover is worth having rather than a nice-to-have.
+ *
+ * It carries NO Article 9 exposure, because it never sees HRIS data. Only model
+ * traffic passes through it. That separation is the reason this is safe to turn
+ * on while the Merge HRIS path stays under the strict no-LLM rule documented in
+ * docs/TRACK-C-MERGE-BRIEF.md.
+ *
+ * Unset means talk to Anthropic directly. Nothing else in the pipeline changes.
+ */
+export const GATEWAY = {
+  baseUrl: process.env.MERGE_GATEWAY_BASE_URL ?? '',
+  apiKey: process.env.MERGE_GATEWAY_API_KEY ?? '',
+};
+
+/**
+ * Options for the Anthropic client, routed through Gateway when configured.
+ *
+ * Kept here rather than inline at each construction site so that Track A has
+ * exactly one place to change if Gateway's contract turns out to differ from
+ * what the docs imply. Both extract.ts and core/render.ts use this.
+ */
+export function anthropicClientOptions(): { apiKey: string; baseURL?: string } {
+  if (GATEWAY.baseUrl) {
+    return {
+      // Gateway authenticates with its own key and holds the provider
+      // credential. Fall back to the Anthropic key if only the URL is set.
+      apiKey: GATEWAY.apiKey || KEYS.anthropic,
+      baseURL: GATEWAY.baseUrl,
+    };
+  }
+  return { apiKey: KEYS.anthropic };
+}
+
+/**
  * Dry run mode. When true the pipeline exercises every code path with
  * deterministic synthetic data and makes zero network calls.
  *

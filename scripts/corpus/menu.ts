@@ -14,7 +14,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { DRY_RUN, EXTRACTION_MODEL, KEYS } from './config';
+import { anthropicClientOptions, DRY_RUN, EXTRACTION_MODEL } from './config';
 import type { MenuItem } from './extract';
 import type { VenueRecord } from './places';
 
@@ -42,7 +42,8 @@ No prose, no markdown fence.`;
 
 let client: Anthropic | null = null;
 function anthropic(): Anthropic {
-  if (!client) client = new Anthropic({ apiKey: KEYS.anthropic });
+  // Routed through Merge Gateway when configured; see anthropicClientOptions.
+  if (!client) client = new Anthropic(anthropicClientOptions());
   return client;
 }
 
