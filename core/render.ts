@@ -34,6 +34,27 @@ const RENDER_MODEL = 'claude-opus-5';
 const MAX_SENTENCES = 4;
 const MIN_SENTENCES = 2;
 
+/**
+ * Chained-clause ceiling. An anti-gaming backstop, not a second sentence limit,
+ * and deliberately higher than MAX_SENTENCES.
+ *
+ * Calibrated by measurement rather than taste, because setting it equal to
+ * MAX_SENTENCES rejected correct writing: against the live model, two of three
+ * renderings failed here on prose that was fine.
+ *
+ *   3  the target voice example from the spec
+ *   3  live model output that passed everything else
+ *   5  live model output on the twin packet, correct but clause-heavy
+ *   ---------------------------------------------------------------
+ *   6  semicolon chain, every period replaced
+ *   6  dash chain
+ *   7  "and" splice
+ *
+ * 5 sits in the gap. Legitimate writing never exceeded it and no abuse case
+ * reached it. Re-measure with scripts/corpus/live-voice-check.ts before moving.
+ */
+const MAX_CLAUSES = 5;
+
 /** One initial attempt plus two repairs. Beyond that the model is not going to get there. */
 const MAX_ATTEMPTS = 3;
 
@@ -85,6 +106,11 @@ VOICE.
 No exclamation points. No emoji. No "you'll love", no "amazing", no "must-try",
 no "incredible", no "delicious". No enthusiasm markers of any kind. Flat,
 specific, slightly skeptical. Name the dish, name the downside, stop.
+
+NO DASHES BETWEEN CLAUSES. No em-dash, no en-dash, no double hyphen. Use a comma
+or start a new sentence. A dash is the clearest sign a machine wrote something,
+and the whole point of this is that it reads like a person told you. A hyphen
+inside a compound word like "char-forward" is fine.
 
 SIMILARITY IS LANGUAGE, NEVER A NUMBER.
 Say "people who share your thing about sweetness in savory food". Never say a
@@ -517,11 +543,17 @@ const PEOPLE_METRIC_PATTERNS: RegExp[] = [
 ];
 
 /**
- * Words that appear at the start of a sentence in ordinary speech and must not
- * be mistaken for a proper noun. The tradeoff: a fabricated venue name that
- * happens to be a common English word AND lands at the start of a sentence will
- * slip past the proper-noun check. Venue names appear mid-sentence in practice,
- * and mid-sentence is caught exactly.
+ * NO LONGER USED by the proper-noun check, and kept only as a record of an
+ * approach that failed.
+ *
+ * This was an allowlist of common sentence-initial words, so that a capitalized
+ * ordinary word would not be mistaken for a venue. Against the live model it
+ * rejected "Fair warning" as a hallucinated name, because no hand-written list
+ * of ninety words can stand in for English. See findUngroundedProperNouns for
+ * what replaced it.
+ *
+ * Left in place because the dish-slot check below still consults nothing like
+ * it, and re-adding a word list is a tempting wrong turn worth labelling.
  */
 const COMMON_STARTERS = new Set([
   'a', 'an', 'and', 'ask', 'at', 'avoid', 'be', 'both', 'bring', 'but', 'come',
@@ -718,7 +750,21 @@ function findUngroundedProperNouns(text: string, packet: EvidencePacket): string
       const isSentenceStart = runStart === 0;
       const everyWordKnown = words(phrase).every((w) => allowedWords.has(w));
       const inAllowedName = allowed.some((n) => n.includes(norm));
-      const commonStart = isSentenceStart && run.length === 1 && COMMON_STARTERS.has(words(phrase)[0]);
+      // A SINGLE capitalized word at the start of a sentence is not evidence of
+      // anything: it is capitalized because a sentence started, not because it
+      // names a place. This was an allowlist of about ninety lowercase words
+      // trying to stand in for all of English, and against the live model it
+      // rejected "Fair warning" as a hallucinated venue. "Worth", "Careful",
+      // "Honestly" and every other ordinary adjective would have failed the
+      // same way.
+      //
+      // Dropping it costs one narrow detection: a one-word invented venue used
+      // only ever at a sentence start. Three mechanisms still cover invented
+      // names, and none of them depend on an English word list: multi-word
+      // capitalized runs (stricter, below), any capitalized word appearing
+      // MID-sentence, and findUngroundedDishes, which works on grammar and so
+      // catches lowercase dish names too.
+      const commonStart = isSentenceStart && run.length === 1;
       // A multi-word capitalized run is a name, and a name has to appear in the
       // packet as that name. "Every word came from somewhere in the packet" is
       // not enough for two words or more, because the packet's own vocabulary
@@ -927,6 +973,19 @@ export function validateRendering(text: string, packet: EvidencePacket): Validat
     violations.push({ code: 'enthusiasm', detail: 'Contains an emoji. No emoji, ever.' });
   }
 
+  // Em-dashes and en-dashes between clauses. Not an enthusiasm marker, but the
+  // single most recognizable tell that a machine wrote something, and this
+  // product's whole claim is that a person told you. Live renderings produced
+  // them steadily until the prompt forbade it, so it is checked rather than
+  // merely requested. A hyphen in "char-forward" is fine and is not matched.
+  const dash = trimmed.match(/[–—]|\s-{2,}\s/);
+  if (dash) {
+    violations.push({
+      code: 'enthusiasm',
+      detail: `Contains "${dash[0].trim()}". Use a comma or a period. A dash reads as machine-written.`,
+    });
+  }
+
   const sentences = splitSentences(trimmed);
   const clauses = countClauses(folded);
   if (sentences.length > MAX_SENTENCES) {
@@ -934,14 +993,21 @@ export function validateRendering(text: string, packet: EvidencePacket): Validat
       code: 'too_long',
       detail: `${sentences.length} sentences. Maximum is ${MAX_SENTENCES}.`,
     });
-  } else if (clauses > MAX_SENTENCES) {
-    // Same rule, counted honestly. A semicolon or a run of "and" clauses does
-    // not make a paragraph shorter, it only makes the periods harder to find.
+  } else if (clauses > MAX_CLAUSES) {
+    // Anti-gaming, not a second sentence limit. A semicolon or a run of "and"
+    // clauses does not make a paragraph shorter, it only makes the periods
+    // harder to find, so one sentence with ten chained clauses must still fail.
+    //
+    // The allowance is deliberately HIGHER than MAX_SENTENCES. Set equal, this
+    // rejected ordinary prose: the target voice itself chains "which is not what
+    // the room does here, the room orders noodles" inside one sentence, and
+    // against the live model two of three renderings failed here on writing that
+    // was correct. A validator that refuses the spec's own exemplar is broken.
     violations.push({
       code: 'too_long',
       detail:
-        `${clauses} clauses chained across ${sentences.length} sentences. Maximum is ` +
-        `${MAX_SENTENCES}. Semicolons and strung-together "and" clauses count as sentences.`,
+        `${clauses} chained clauses across ${sentences.length} sentences. Maximum is ` +
+        `${MAX_CLAUSES} clauses and ${MAX_SENTENCES} sentences. Break it up or cut a clause.`,
     });
   }
   if (sentences.length < MIN_SENTENCES) {
