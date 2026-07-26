@@ -109,6 +109,32 @@ export function resetRateLimits(): void {
   buckets.clear();
 }
 
+// ---------------------------------------------------------------------------
+// Route-facing helper
+//
+// Every route calls enforceRateLimit exactly once, near the top, so the check
+// is never skippable by an early return added later in the body.
+// ---------------------------------------------------------------------------
+
+/** Thrown by enforceRateLimit. Carries the retry hint withApiHandler needs to set Retry-After. */
+export class RateLimitedError extends Error {
+  readonly retryAfterSeconds: number;
+
+  constructor(retryAfterSeconds: number) {
+    super('Too many requests. Slow down and try again.');
+    this.name = 'RateLimitedError';
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
+/** Consume one token for a key, or throw RateLimitedError. Never returns false. */
+export function enforceRateLimit(key: string, config: BucketConfig): void {
+  const result = takeToken(key, config);
+  if (!result.allowed) {
+    throw new RateLimitedError(result.retryAfterSeconds);
+  }
+}
+
 /**
  * Per-route budgets.
  *
@@ -126,4 +152,14 @@ export const LIMITS = {
   cardCreate: { capacity: 10, refillPerSecond: 0.1 },
   cardRead: { capacity: 60, refillPerSecond: 1 },
   compare: { capacity: 15, refillPerSecond: 0.25 },
+  /**
+   * Menu photo to order. Tighter than recommend: one call here is a vision
+   * read plus a phi extraction batch plus a render, so it is the most
+   * expensive single request in the product.
+   */
+  agentMenu: { capacity: 6, refillPerSecond: 3 / 60 },
+  // An organizer plans a handful of dinners a day, and this path can reach an
+  // HRIS connector, so the sustained rate stays low even though the burst
+  // allows retrying a flaky request without waiting.
+  enterpriseDinner: { capacity: 6, refillPerSecond: 1 / 60 },
 } as const satisfies Record<string, BucketConfig>;

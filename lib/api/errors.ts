@@ -22,6 +22,7 @@ export type ApiErrorCode =
   | 'invalid_query'
   | 'not_found'
   | 'rate_limited'
+  | 'unauthorized'
   | 'unavailable'
   | 'internal';
 
@@ -40,6 +41,7 @@ const STATUS: Record<ApiErrorCode, number> = {
   invalid_query: 400,
   not_found: 404,
   rate_limited: 429,
+  unauthorized: 401,
   // 503 rather than 500: "no corpus, no credentials, nothing to serve" is a
   // state the caller can retry out of, and a 500 tells them to file a bug.
   unavailable: 503,

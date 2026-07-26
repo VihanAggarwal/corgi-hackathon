@@ -349,4 +349,47 @@ describe('exclusion rules', () => {
     const rule = __testing.exclusionRuleFor('peanut allergy');
     expect(__testing.ruleExcludes(rule, __testing.haystack({ id: 'x', name: 'Boiled peanuts' }), [])).toBe(true);
   });
+
+  // ATTACK: a value that is itself the name of an Object.prototype member.
+  //
+  // EXCLUSION_LEXICON is a plain object literal indexed with an attendee's own
+  // words. `EXCLUSION_LEXICON['constructor']` walks the prototype chain and
+  // returns the Object constructor function rather than undefined, which is
+  // truthy, so exclusionRuleFor accepted it as a term list. Every consumer of
+  // that list assumes an array: ruleExcludes does `for (const term of
+  // rule.terms)`, which throws on a function. One attendee entering the word
+  // "constructor" as a dietary constraint therefore crashed the whole set
+  // intersection (and the enterprise dinner request with it) rather than being
+  // treated as an ordinary, if odd, word to filter on. Not a value disclosure,
+  // but an attacker-controlled string reaching a bare property lookup on an
+  // object is exactly the shape of bug this module cannot afford.
+  it('does not resolve a constraint value to an inherited Object.prototype member', () => {
+    const rule = __testing.exclusionRuleFor('constructor');
+    expect(Array.isArray(rule.terms)).toBe(true);
+    expect(rule.terms).toEqual(['constructor']);
+
+    expect(() =>
+      applyConstraintRows(
+        ['u1'],
+        MENU,
+        [row('u1', 'dietary', 'constructor')],
+      ),
+    ).not.toThrow();
+
+    const result = applyConstraintRows(['u1'], MENU, [row('u1', 'dietary', 'constructor')]);
+    // No dish on the fixture menu is literally named "constructor", so the
+    // filter should apply the constraint and remove nothing, not crash.
+    expect(ids(result)).toEqual(MENU.map((d) => d.id));
+    expect(result.appliedCount).toBe(1);
+  });
+
+  it('lexiconLookup refuses every own-property of a plain object, not just "constructor"', () => {
+    // toString and hasOwnProperty stay case-sensitive and never match because
+    // tokenize lowercases everything, but constructor is the one all-lowercase
+    // inherited member and the one the guard exists for.
+    expect(__testing.lexiconLookup('constructor')).toBeUndefined();
+    expect(__testing.lexiconLookup('toString')).toBeUndefined();
+    expect(__testing.lexiconLookup('hasOwnProperty')).toBeUndefined();
+    expect(__testing.lexiconLookup('peanut')).toBeDefined();
+  });
 });

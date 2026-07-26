@@ -266,6 +266,29 @@ interface ExclusionRule {
 }
 
 /**
+ * Look up a key in EXCLUSION_LEXICON without walking the prototype chain.
+ *
+ * EXCLUSION_LEXICON is an object literal, so a bare `EXCLUSION_LEXICON[key]`
+ * resolves inherited members of Object.prototype when `key` collides with one.
+ * A self-declared constraint whose value is literally "constructor" tokenizes
+ * to the single word "constructor" (tokenize already strips the non-alphanumeric
+ * characters that would defuse "__proto__" the same way), and
+ * `EXCLUSION_LEXICON['constructor']` then returns the Object constructor
+ * function rather than undefined: truthy, so the whole-label branch below
+ * accepted it as a term list, and every other caller in this file assumes a
+ * term list is an array. `ruleExcludes` then does `for (const term of
+ * rule.terms)` and a function is not iterable, so a single attendee entering
+ * "constructor" as their dietary constraint took down the whole dinner
+ * request. hasOwnProperty makes the lookup miss the prototype entirely, the
+ * same value a real dish menu can never accidentally trigger.
+ */
+function lexiconLookup(key: string): readonly string[] | undefined {
+  return Object.prototype.hasOwnProperty.call(EXCLUSION_LEXICON, key)
+    ? EXCLUSION_LEXICON[key]
+    : undefined;
+}
+
+/**
  * Turn a raw constraint value into exclusion terms.
  *
  * Known values map to an ingredient list, because "kosher" does not appear in
@@ -280,7 +303,7 @@ function exclusionRuleFor(value: string): ExclusionRule {
   const tokens = tokenize(value).filter((t) => !GENERIC_VALUE_TOKENS.has(t));
   const label = tokens.join(' ');
 
-  const whole = EXCLUSION_LEXICON[label];
+  const whole = lexiconLookup(label);
   if (whole) return { label, terms: whole };
 
   // A multi-word value where one word is known: "shellfish and pork" or
@@ -288,7 +311,7 @@ function exclusionRuleFor(value: string): ExclusionRule {
   // literal words, which would only match a dish that spells the word out.
   const fromTokens: string[] = [];
   for (const token of tokens) {
-    const known = EXCLUSION_LEXICON[token];
+    const known = lexiconLookup(token);
     if (known) fromTokens.push(...known);
   }
   if (fromTokens.length > 0) return { label, terms: [...new Set(fromTokens)] };
@@ -507,6 +530,7 @@ export function defaultConstraintSource(): ConstraintSource {
  */
 export const __testing = {
   exclusionRuleFor,
+  lexiconLookup,
   ruleExcludes,
   haystack,
   normalize,

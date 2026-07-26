@@ -134,6 +134,46 @@ export function boundedInt(
 }
 
 /**
+ * An optional finite number. Absent, null, or empty string all yield
+ * undefined rather than a default, because several callers (theta's
+ * nComparisons and posteriorVar) treat "unknown" and "zero" as different
+ * facts about a user and must not collapse the two.
+ */
+export function optionalNumber(source: Record<string, unknown>, field: string): number | undefined {
+  const value = source[field];
+  if (value === undefined || value === null || value === '') return undefined;
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) {
+    throw new ApiError('invalid_body', `"${field}" must be a number.`, field);
+  }
+  return n;
+}
+
+/**
+ * An optional array of exactly `length` finite numbers, or ApiError('invalid_body').
+ *
+ * The wrong length is rejected rather than padded or truncated: a short theta
+ * silently shifts every axis after the point it went missing, which corrupts
+ * a ranking in a way nothing downstream can detect.
+ */
+export function optionalNumberArray(
+  source: Record<string, unknown>,
+  field: string,
+  length: number,
+): number[] | undefined {
+  const value = source[field];
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.length !== length) {
+    throw new ApiError('invalid_body', `"${field}" must be an array of ${length} numbers.`, field);
+  }
+  const out = value.map((v) => (typeof v === 'number' ? v : NaN));
+  if (out.some((v) => !Number.isFinite(v))) {
+    throw new ApiError('invalid_body', `"${field}" must contain only finite numbers.`, field);
+  }
+  return out;
+}
+
+/**
  * Read the query string as the same shape the body helpers accept.
  *
  * GET routes carry their identity in the query, and reusing the body validators
