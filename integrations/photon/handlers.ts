@@ -835,13 +835,40 @@ function isBareOpener(text: string): boolean {
   return words.every((w) => openers.has(w));
 }
 
-function classifyTextIntent(text: string): 'venue_overview' | 'priced_search' | 'unknown' {
+function classifyTextIntent(
+  text: string,
+): 'venue_overview' | 'priced_search' | 'unknown' | 'off_topic' {
   const t = text.toLowerCase();
   if (/\bwhat (?:do|should) i (?:get|order|eat)\b/.test(t) || /\bwhat['’]s good here\b/.test(t)) {
     return 'venue_overview';
   }
   if (PRICE_RE.test(t) || /\bunder\s+\$?\d/.test(t)) return 'priced_search';
+  if (isOffTopic(t)) return 'off_topic';
   return 'unknown';
+}
+
+/**
+ * A message with no plausible connection to eating.
+ *
+ * "unknown" (the old fallback) still went to the recommender, so someone
+ * asking "how's your day" got a restaurant back with no acknowledgement of
+ * what they actually said. This is deliberately conservative: it only fires
+ * on text carrying NONE of the words a food ask would carry, so a vague but
+ * real request like "something good" still falls through to a recommendation
+ * rather than getting deflected.
+ */
+function isOffTopic(t: string): boolean {
+  if (
+    /\b(eat|food|hungry|craving|spicy|hot|cheap|fancy|light|heavy|veg|vegan|meat|noodle|ramen|taco|sushi|pizza|dumpling|soup|breakfast|lunch|dinner|snack|drink|order|restaurant|spot|place|menu|near|good|great|feel(ing)?|mood|want|somewhere|something)\b/.test(
+      t,
+    )
+  ) {
+    return false;
+  }
+  // Anything left carries no food word at all: a question about the agent, a
+  // joke, small talk, whatever. All of it reads as off topic here, because
+  // none of it is something a recommendation could use.
+  return t.trim().length > 0;
 }
 
 /**
@@ -1026,6 +1053,19 @@ async function handlePlainText(
   }
 
   const intent = classifyTextIntent(message.text);
+
+  // OFF TOPIC GETS A SHORT, HONEST REPLY, THEN THE CONVERSATION COMES BACK.
+  //
+  // Ignoring an off-topic message and firing a recommendation anyway reads as
+  // not listening. Answering it at length and never returning to food reads
+  // as the agent forgetting what it is for. One line acknowledging what was
+  // said, one line steering back, nothing longer.
+  if (intent === 'off_topic') {
+    return [
+      replyText(message, "lol im just here for the food stuff, cant help with that"),
+      replyText(message, 'what are you feeling tho, ill find you something'),
+    ];
+  }
 
   // A CALIBRATED PERSON ASKING WHERE TO EAT GETS A RECOMMENDATION.
   //

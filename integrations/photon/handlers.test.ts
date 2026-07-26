@@ -698,6 +698,37 @@ describe('plain text queries', () => {
     expect(allText(out)).not.toMatch(/exploded|error|stack/i);
   });
 
+  it('deflects off-topic chat with one line, then steers back to food', async () => {
+    const store = createInMemoryAgentStore();
+    const transport = createStubTransport();
+
+    const out = await handleInboundMessage(
+      inboundText({ text: 'how is your day going' }),
+      calibrated(transport, store),
+    );
+
+    const text = allText(out);
+    expect(text).toMatch(/food/i);
+    expect(text.toLowerCase()).not.toMatch(/restaurant|liang pi|hunan/i);
+    // Still a burst, not a lecture.
+    expect(out.length).toBeLessThanOrEqual(3);
+  });
+
+  it('does not deflect a vague but real food ask', async () => {
+    const store = createInMemoryAgentStore();
+    const transport = createStubTransport();
+
+    const out = await handleInboundMessage(
+      inboundText({ text: 'something good' }),
+      {
+        ...calibrated(transport, store),
+        recommendForConversation: async () => [{ text: 'get the liang pi.' }],
+      },
+    );
+
+    expect(allText(out)).toContain('liang pi');
+  });
+
   it('writes like a text message, not a review', async () => {
     const store = createInMemoryAgentStore();
     const transport = createStubTransport();
