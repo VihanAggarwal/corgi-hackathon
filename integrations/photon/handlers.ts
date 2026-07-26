@@ -803,6 +803,38 @@ async function applyFollowUpReply(
 
 const PRICE_RE = /\$\s?(\d+(?:\.\d{1,2})?)/;
 
+/**
+ * A message that opens a conversation without saying anything to act on.
+ *
+ * "hey", "yo", "hey new restaurant" all mean "I am here", not "here is what I
+ * want". Anything carrying a craving, a cuisine, a price, or a constraint is
+ * NOT a bare opener and goes straight to picks: re-asking somebody what they
+ * feel like when they just told you is worse than not asking at all.
+ */
+function isBareOpener(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[^a-z0-9$\s]/g, '');
+  if (t.length === 0 || t.length > 40) return false;
+  if (PRICE_RE.test(text)) return false;
+
+  // Any word that expresses a want makes this not an opener.
+  if (
+    /\b(spicy|hot|cheap|fancy|light|heavy|veg|vegan|noodle|ramen|taco|sushi|pizza|dumpling|soup|breakfast|lunch|dinner|near|open|craving|feel(ing)?|want|mood)\b/.test(
+      t,
+    )
+  ) {
+    return false;
+  }
+
+  const words = t.split(/\s+/).filter(Boolean);
+  const openers = new Set([
+    'hey', 'hi', 'yo', 'hello', 'sup', 'wsg', 'wyd', 'heyy', 'ay', 'yoo',
+    'new', 'restaurant', 'restaurants', 'spot', 'spots', 'place', 'places',
+    'rec', 'recs', 'food', 'again', 'back', 'im', 'a', 'the', 'me', 'gimme',
+    'another', 'one', 'more', 'whats', 'good',
+  ]);
+  return words.every((w) => openers.has(w));
+}
+
 function classifyTextIntent(text: string): 'venue_overview' | 'priced_search' | 'unknown' {
   const t = text.toLowerCase();
   if (/\bwhat (?:do|should) i (?:get|order|eat)\b/.test(t) || /\bwhat['’]s good here\b/.test(t)) {
@@ -895,22 +927,25 @@ function calibrationInvite(
   nComparisons: number,
   conversationId: string,
   area: string,
-): string {
+): string[] {
   const url = calibrationUrl(conversationId, area);
   if (nComparisons === 0) {
-    return (
-      `cool, ${area}. i dont know how you eat yet tho, so anything i said would be a guess. ` +
-      `swipe through these and ill actually be useful: ${url}`
-    );
+    return [
+      `cool, ${area}`,
+      'i dont know how you eat yet tho so anything id say is a guess',
+      `swipe through these real quick and ill actually be useful: ${url}`,
+    ];
   }
-  return (
-    `ive got a rough read on you but not enough to be confident. ` +
-    `a few more here and ill stop hedging: ${url}`
-  );
+  return [
+    'got a rough read on you but not enough to be confident',
+    `few more and ill stop hedging: ${url}`,
+  ];
 }
 
-const AREA_QUESTION =
-  'hey. what area are you in? ill only send you places you can actually get to';
+const AREA_QUESTION = [
+  'hey',
+  'what area are you in? ill only send you places you can actually get to',
+];
 
 /**
  * Two or three options in one message, the way a friend answers.
@@ -922,29 +957,34 @@ const AREA_QUESTION =
  * The trailing ask is what makes the review loop exist at all: no rating is
  * ever scraped, so one only exists if somebody sends it.
  */
-function composeOptions(picks: Array<{ text: string }>, area: string | null): string {
+function composeOptions(picks: Array<{ text: string }>, area: string | null): string[] {
   const top = picks.slice(0, 3);
   if (top.length === 1) {
-    return `${top[0].text} lmk how it goes, out of 10 after`;
+    return [top[0].text, 'lmk how it goes. number out of 10 after'];
   }
 
-  const lines = [
-    area ? `ok ${area}, few ideas:` : 'ok, few ideas:',
-    ...top.map((p, i) => `${i + 1}. ${p.text}`),
-  ];
-  lines.push(
+  return [
+    area ? `ok ${area}. few ideas` : 'ok few ideas',
+    ...top.map((p) => p.text),
     top.length > 2
-      ? 'the first ones my pick tbh. whichever you go with, text me a number out of 10 after'
+      ? 'first ones my pick tbh. whichever you go with, text me a number out of 10 after'
       : 'either works. text me a number out of 10 after so i learn something',
-  );
-  return lines.join('\n');
+  ];
 }
 
+/**
+ * People text in bursts, not paragraphs.
+ *
+ * Every reply path returns a LIST of short messages rather than one blob with
+ * newlines in it. A wall of text in a thread reads as a bot no matter how good
+ * the words are, and three short lines arriving in sequence reads as a person
+ * even when it is the same sentence split up.
+ */
 async function handlePlainText(
   message: InboundMessage,
   state: UserState,
   deps: HandlerDeps,
-): Promise<OutboundMessage> {
+): Promise<OutboundMessage[]> {
   const convId = message.conversation.id;
   const knownArea = deps.store.area(convId);
 
@@ -960,12 +1000,29 @@ async function handlePlainText(
       if (deps.store.wasAreaAsked(convId) && looksLikeArea(message.text)) {
         const area = message.text.trim();
         deps.store.setArea(convId, area);
-        return replyText(message, calibrationInvite(state.nComparisons, convId, area));
+        return calibrationInvite(state.nComparisons, convId, area).map((t) => replyText(message, t));
       }
       deps.store.markAreaAsked(convId);
-      return replyText(message, AREA_QUESTION);
+      return AREA_QUESTION.map((t) => replyText(message, t));
     }
-    return replyText(message, calibrationInvite(state.nComparisons, convId, knownArea));
+    return calibrationInvite(state.nComparisons, convId, knownArea).map((t) => replyText(message, t));
+  }
+
+  // A RETURNING PERSON GETS GREETED, NOT SERVED.
+  //
+  // Someone who opens with "hey" or "hey new restaurant" has not told you
+  // anything yet, and answering with three ranked picks reads as a vending
+  // machine. Asking what they are feeling is both friendlier and better input:
+  // the mood they type next is worth more than the guess it replaces.
+  //
+  // Only fires on a bare opener. Anyone who already said what they want
+  // ("something spicy", "under $20") skips straight to the picks, because
+  // asking a question they already answered is its own kind of robotic.
+  if (isBareOpener(message.text)) {
+    return [
+      replyText(message, 'yo wsg'),
+      replyText(message, 'any new flavour prefs or what we feeling tod'),
+    ];
   }
 
   const intent = classifyTextIntent(message.text);
@@ -980,9 +1037,9 @@ async function handlePlainText(
     const recommend = deps.recommendForConversation;
     if (recommend) {
       try {
-        const picks = await recommend(message.conversation.id);
+        const picks = await recommend(message.conversation.id, knownArea);
         if (picks.length > 0) {
-          return replyText(message, composeOptions(picks, knownArea));
+          return composeOptions(picks, knownArea).map((t) => replyText(message, t));
         }
       } catch {
         // Fall through to the honest non-answer below rather than surfacing a
@@ -994,16 +1051,16 @@ async function handlePlainText(
   if (intent === 'priced_search') {
     const match = message.text.match(PRICE_RE);
     const ceiling = match ? ` under $${match[1]}` : '';
-    return replyText(
-      message,
-      `nothing${ceiling} came back that i'd actually stand behind right now. send me a menu photo and ill work from that`,
-    );
+    return [
+      replyText(message, `nothing${ceiling} came back that id actually stand behind rn`),
+      replyText(message, 'send me a menu photo and ill work from that'),
+    ];
   }
 
-  return replyText(
-    message,
-    'nothing came back that i\'d actually stand behind right now. send me a menu photo and ill work from that',
-  );
+  return [
+    replyText(message, 'nothing came back that id actually stand behind rn'),
+    replyText(message, 'send me a menu photo and ill work from that'),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -1031,7 +1088,8 @@ export interface HandlerDeps {
    */
   recommendForConversation?: (
     conversationId: string,
-  ) => Promise<Array<{ text: string }>>;
+    area: string | null,
+  ) => Promise<Array<{ text: string; dishId?: string | null }>>;
 }
 
 /**
@@ -1069,7 +1127,7 @@ export async function handleInboundMessage(message: InboundMessage, deps: Handle
       const state = await (deps.getUserState ?? (() => Promise.resolve(defaultUserState())))(
         message.conversation.id,
       );
-      outbound.push(await handlePlainText(message, state, deps));
+      outbound.push(...(await handlePlainText(message, state, deps)));
     }
   }
 

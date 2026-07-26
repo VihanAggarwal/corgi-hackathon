@@ -223,7 +223,18 @@ export function selectDuels(
     const { score, p } = expectedInformation(a, b, theta, axisVariance);
     if (score <= 0) continue;
 
-    scored.push({ a, b, expectedInformation: score, predictedP: p });
+    // JITTER, so two people do not get the same quiz.
+    //
+    // At theta = 0, which is every new user, p(1-p) is a constant 0.25 and the
+    // score collapses to |d|^2. The argmax is then the same handful of extreme
+    // pairs for everyone, so every first session asked nearly identical
+    // questions and landed on the same read. Scaling by 0.7 to 1.3 keeps
+    // high-information pairs strongly favored while letting the runners-up
+    // surface, which is a real gain: a quiz that varies covers more of the
+    // space across a population.
+    const jittered = score * (0.7 + rand() * 0.6);
+
+    scored.push({ a, b, expectedInformation: jittered, predictedP: p });
   }
 
   scored.sort((x, y) => y.expectedInformation - x.expectedInformation);

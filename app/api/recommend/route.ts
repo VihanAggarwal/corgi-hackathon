@@ -36,7 +36,15 @@ export async function POST(request: Request): Promise<Response> {
     const count = boundedInt(body, 'count', { min: 1, max: 5, fallback: 3 });
     const stored = getOrCreateIdentity(identityKey(identity), identity.deviceId, identity.userId);
 
-    const recommendations = await recommendForIdentity(identity, stored, { count });
+    const area = typeof body.area === 'string' ? body.area : null;
+    const excludeRaw = Array.isArray(body.exclude) ? body.exclude : [];
+    const exclude = new Set(excludeRaw.filter((v): v is string => typeof v === 'string'));
+
+    const recommendations = await recommendForIdentity(identity, stored, {
+      count,
+      area,
+      exclude,
+    });
     return jsonOk({ recommendations });
   });
 }

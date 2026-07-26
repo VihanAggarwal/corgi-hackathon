@@ -47,6 +47,31 @@ import {
 
 export interface RecommendOptions {
   count?: number;
+  /**
+   * The neighborhood the person said they were in.
+   *
+   * Collected by the agent and, until now, thrown away: recommendations
+   * ignored it entirely and happily sent someone in Astoria to Crown Heights.
+   * Matched loosely against venue neighborhoods, and IGNORED when nothing in
+   * the corpus is nearby, because an empty list is worse than a place that is
+   * a train ride away as long as the reply is honest about it.
+   */
+  area?: string | null;
+  /** Dish ids already sent recently, so the same three do not repeat. */
+  exclude?: Set<string>;
+}
+
+/** Loose neighborhood match: "lower east side" against "Lower East Side". */
+function inArea(neighborhood: string, area: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z ]/g, '').trim();
+  const a = norm(area);
+  const n = norm(neighborhood);
+  if (a.length < 3) return false;
+  if (n.includes(a) || a.includes(n)) return true;
+  // Any shared significant word, so "east village" matches "East Village" and
+  // "brooklyn" matches "Downtown Brooklyn".
+  const words = a.split(/\s+/).filter((w) => w.length > 3);
+  return words.some((w) => n.includes(w));
 }
 
 /**
@@ -90,7 +115,20 @@ export async function recommendForIdentity(
   // by side is not eating the dish, and picking one in a duel is a reason to
   // recommend it, not a reason to withhold it.
   const unseen = DISHES.filter((d) => !stored.seenDishIds.has(d.id));
-  const pool = unseen.length > 0 ? unseen : DISHES;
+  let pool = unseen.length > 0 ? unseen : DISHES;
+
+  // Do not send the same three places every time. Dropping what was just
+  // recommended is what makes a second ask produce a second answer.
+  if (options.exclude && options.exclude.size > 0) {
+    const fresh = pool.filter((d) => !options.exclude!.has(d.id));
+    if (fresh.length >= count) pool = fresh;
+  }
+
+  // Respect the area they gave, and fall back rather than return nothing.
+  if (options.area) {
+    const near = pool.filter((d) => inArea(venueHood(d.venueId), options.area!));
+    if (near.length > 0) pool = near;
+  }
 
   // Hard rule 3. The filter runs on the whole candidate list before ranking,
   // before a packet is built, and before any model call.

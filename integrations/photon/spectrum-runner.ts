@@ -66,6 +66,9 @@ import {
  * calibration link points at, keyed by the same device id that link carries.
  * One store, one profile, both surfaces agreeing.
  */
+/** Dish ids recently sent per conversation, so repeats get filtered out. */
+const recentlySent = new Map<string, string[]>();
+
 const SITE = (
   process.env.NEXT_PUBLIC_SITE_URL ?? 'https://corgi-hackathon-alpha.vercel.app'
 ).replace(/\/$/, '');
@@ -338,15 +341,25 @@ async function main(): Promise<void> {
             nComparisons: profile?.userVector?.nComparisons ?? 0,
           };
         },
-        recommendForConversation: async (conversationId) => {
+        recommendForConversation: async (conversationId, area) => {
           const id = conversationDeviceId(conversationId);
-          const out = await siteJson<{ recommendations: Array<{ text: string }> }>(
+          const seen = recentlySent.get(conversationId) ?? [];
+          const out = await siteJson<{
+            recommendations: Array<{ text: string; dishId?: string | null }>;
+          }>(
             '/api/recommend',
             // Three, because a friend texts back a short list, not one answer.
             // composeOptions trims and formats whatever comes back.
-            { method: 'POST', body: JSON.stringify({ deviceId: id, count: 3 }) },
+            {
+              method: 'POST',
+              body: JSON.stringify({ deviceId: id, count: 3, area, exclude: seen }),
+            },
           );
-          return out?.recommendations ?? [];
+          const picks = out?.recommendations ?? [];
+          // Remember what went out so the next ask is not the same three.
+          const ids = picks.map((p) => p.dishId).filter((v): v is string => Boolean(v));
+          recentlySent.set(conversationId, [...seen, ...ids].slice(-12));
+          return picks;
         },
       });
       for (const r of replies) console.log(`  -> ${r.text.slice(0, 80)}`);
